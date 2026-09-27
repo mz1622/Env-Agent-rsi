@@ -1,0 +1,9 @@
+.artifact/node_modules
+outputs/**/*.inspect.ndjson
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+artifacts/runs/

@@ -1,0 +1,11 @@
+{
+  "task": {
+    "target_value": "target-item",
+    "page_size": 2
+  },
+  "rules": {
+    "transition": [],
+    "observation": []
+  }
+}
+

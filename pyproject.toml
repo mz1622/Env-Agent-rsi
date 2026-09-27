@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "env-agent-rsi"
+version = "0.1.0"
+description = "Minimal environment-evolution harness for stateful tool-using agents"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+env-agent-rsi-demo = "env_agent_rsi.demo:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+

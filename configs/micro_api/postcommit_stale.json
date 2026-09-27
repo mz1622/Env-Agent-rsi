@@ -1,0 +1,22 @@
+{
+  "task": {
+    "target_value": "target-item",
+    "page_size": 2
+  },
+  "rules": {
+    "transition": [
+      {
+        "type": "post_commit_timeout",
+        "tool": "append_item",
+        "trigger_on_nth": 1
+      }
+    ],
+    "observation": [
+      {
+        "type": "stale_read_after_write",
+        "stale_reads": 1
+      }
+    ]
+  }
+}
+
