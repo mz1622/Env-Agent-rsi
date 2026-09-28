@@ -37,6 +37,7 @@ Agent 必须把目标值写入状态化 API，最终恰好存在一次，并且�
 
 ## 当前实现
 
+- 可执行任务配置：[`task.json`](task.json)
 - 基础环境：`src/env_agent_rsi/micro_api/item_env.py`
 - verifier：`src/env_agent_rsi/verifiers/exactly_once.py`
 - `f_A`：`src/env_agent_rsi/transforms/action.py`
@@ -44,3 +45,6 @@ Agent 必须把目标值写入状态化 API，最终恰好存在一次，并且�
 - `f_O`：`src/env_agent_rsi/transforms/observation.py`
 - 配置：`configs/micro_api/`
 
+```bash
+env-agent-rsi-task scenarios/01_exactly_once_write/task.json --agent oracle
+```

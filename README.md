@@ -18,7 +18,7 @@
 4. 日历预约与邮件通知；
 5. repository-level 代码修复。
 
-每个目录都说明任务、来源、使用过相关问题的工作、相关 benchmark、动作空间、verifier 和从辅助环境回到目标环境的课程。
+每个目录都说明任务、来源、使用过相关问题的工作、相关 benchmark、动作空间、verifier 和从辅助环境回到目标环境的课程；五个场景现在均包含可执行 `task.json`、本地状态环境、独立 verifier 和通过性 Oracle。
 
 代码分层与扩展规则见 [`docs/architecture.md`](docs/architecture.md)。核心原则是环境、verifier、`f_A/f_T/f_O` 变换、policy 和 curriculum 相互解耦，并通过显式注册表组合。
 
@@ -57,6 +57,17 @@ env-agent-rsi-demo --agent oracle
 ```bash
 env-agent-rsi-demo --agent naive
 ```
+
+运行其余完整场景：
+
+```bash
+env-agent-rsi-task scenarios/02_order_lifecycle/task.json --agent oracle
+env-agent-rsi-task scenarios/03_issue_workflow/task.json --agent oracle
+env-agent-rsi-task scenarios/04_calendar_email/task.json --agent oracle
+env-agent-rsi-task scenarios/05_code_repair/task.json --agent oracle
+```
+
+把 `--agent oracle` 改为 `--agent manual` 后，命令会输出任务与工具 schema，并通过 JSON Lines 接收外部 Agent 的 tool call。环境只给 Agent 返回 observation；verifier 始终读取未经 `f_O` 变换的真实状态。
 
 `baseline.json` 是无辅助规则的基线，`assistive_idempotency.json` 提供写入前安全护栏，`postcommit_stale.json` 是当前目标故障组合。通过 JSON 可以组合规则，不需要修改 Agent 或中央工厂。
 

@@ -12,6 +12,8 @@ Verifier 独立检查 issue ID、assignee、评论内容与状态，同时确认
 - WebArena-Verified 对任务与 evaluator 做人工审计，并提供确定性离线评分工具：<https://github.com/ServiceNow/webarena-verified>
 - WorkArena 使用 ServiceNow 的企业工作流任务评价知识工作 Agent：<https://www.servicenow.com/research/publication/alexandre-drouin-work-icml2024.html>
 
+本目录以 WebArena-Verified 数据中的 `task_id=446` 为种子：定位 a11yproject 中关于 404 错误的 issue 并分配给 Roshanjossey。为了得到一个能研究 Chain 和部分完成的最小环境，本任务明确增加“添加诊断评论”和“推进到 In Progress”两个写步骤；这是标注过的组合改编，不宣称是 benchmark 原题。
+
 ## 哪些工作用了这个问题
 
 - WebArena 的 GitLab 子集包含打开 issue、处理 merge request、创建 repository 等协作开发任务。
@@ -37,3 +39,13 @@ Verifier 独立检查 issue ID、assignee、评论内容与状态，同时确认
 
 如果 Agent 学会了可靠的“读—写—确认”模式，父节点成功后，分别训练 assign/comment/status 的更容易子节点应全部剪枝。
 
+## 可执行实现
+
+- 任务配置：[`task.json`](task.json)
+- 环境：`src/env_agent_rsi/environments/issue_workflow.py`
+- verifier：`src/env_agent_rsi/verifiers/issue_goal.py`
+- Oracle：`src/env_agent_rsi/scenario_agents.py::issue_oracle`
+
+```bash
+env-agent-rsi-task scenarios/03_issue_workflow/task.json --agent oracle
+```

@@ -7,10 +7,10 @@
   "environment_type": "item",
   "verifier_type": "exactly_once",
   "configs": [
+    "scenarios/01_exactly_once_write/task.json",
     "configs/micro_api/baseline.json",
     "configs/micro_api/assistive_idempotency.json",
     "configs/micro_api/postcommit_stale.json"
   ],
   "related_benchmarks": ["AppWorld", "tau-bench", "ToolSandbox"]
 }
-

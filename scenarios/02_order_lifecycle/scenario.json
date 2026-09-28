@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "order_lifecycle",
   "title": "Conditional order cancellation and modification",
-  "status": "design",
+  "status": "implemented",
   "actions": [
     "authenticate_user",
     "search_orders",
@@ -15,6 +15,6 @@
   ],
   "environment_type": "order_api",
   "verifier_type": "order_goal_state",
+  "configs": ["scenarios/02_order_lifecycle/task.json"],
   "related_benchmarks": ["tau-bench", "tau3-bench", "AppWorld"]
 }
-

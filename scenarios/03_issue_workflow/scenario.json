@@ -2,7 +2,7 @@
   "schema_version": 1,
   "id": "issue_workflow",
   "title": "Multi-step issue workflow",
-  "status": "design",
+  "status": "implemented",
   "actions": [
     "search_issues",
     "get_issue",
@@ -14,6 +14,6 @@
   ],
   "environment_type": "issue_tracker",
   "verifier_type": "issue_goal_state",
+  "configs": ["scenarios/03_issue_workflow/task.json"],
   "related_benchmarks": ["WebArena", "WebArena-Verified", "WorkArena", "WorkArena++"]
 }
-

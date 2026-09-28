@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "environment": {"type": "workplace_apps", "parameters": {}},
+  "task": {
+    "id": "workbench_multidomain_adapted_151",
+    "provenance": {
+      "kind": "adapted",
+      "benchmark": "WorkBench",
+      "source_url": "https://github.com/olly-styles/WorkBench/blob/main/data/processed/tasks_and_outcomes/multi_domain_tasks_and_outcomes.csv",
+      "source_locator": "zero-based data row 151 (Leila overdue-task meeting and email)",
+      "adaptation": "Makes the overdue-task condition true in the initial state and preserves the benchmark's exact event title, recipient, subject, body, duration, and earliest-slot outcome."
+    }
+  },
+  "verifier": {"type": "calendar_email_goal_state"},
+  "rules": {"action": [], "transition": [], "observation": []}
+}

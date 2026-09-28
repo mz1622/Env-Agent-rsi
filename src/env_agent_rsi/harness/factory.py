@@ -7,6 +7,12 @@ from typing import Any, Mapping
 from env_agent_rsi.core.protocol import ActionableEnv
 from env_agent_rsi.core.registry import Builder, ComponentRegistry
 from env_agent_rsi.core.verifier import StateVerifier
+from env_agent_rsi.environments import (
+    CalendarEmailEnv,
+    CodeRepairEnv,
+    IssueWorkflowEnv,
+    OrderLifecycleEnv,
+)
 from env_agent_rsi.harness.wrapper import RuleHarness
 from env_agent_rsi.micro_api.item_env import ItemEnv
 from env_agent_rsi.transforms import (
@@ -17,7 +23,13 @@ from env_agent_rsi.transforms import (
     StaleReadAfterWriteRule,
     TransitionRule,
 )
-from env_agent_rsi.verifiers import ExactlyOnceVerifier
+from env_agent_rsi.verifiers import (
+    CalendarEmailGoalVerifier,
+    CodeRepairGoalVerifier,
+    ExactlyOnceVerifier,
+    IssueGoalVerifier,
+    OrderGoalVerifier,
+)
 
 
 ENVIRONMENTS = ComponentRegistry[ActionableEnv]("environment")
@@ -107,6 +119,58 @@ def _build_item(spec: Mapping[str, Any]) -> ItemEnv:
     )
 
 
+def _task_and_verifier(
+    spec: Mapping[str, Any], default_task_id: str, default_verifier: str
+) -> tuple[dict[str, Any], StateVerifier]:
+    task = dict(spec.get("task", {}))
+    verifier_spec = dict(spec.get("verifier", {"type": default_verifier}))
+    verifier_type = str(verifier_spec.get("type", default_verifier))
+    task.setdefault("id", default_task_id)
+    return task, VERIFIERS.build(verifier_type, verifier_spec)
+
+
+def _build_order_lifecycle(spec: Mapping[str, Any]) -> OrderLifecycleEnv:
+    task, verifier = _task_and_verifier(
+        spec, "tau_retail_adapted_66", "order_goal_state"
+    )
+    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
+    if "instruction" in task:
+        kwargs["instruction"] = str(task["instruction"])
+    return OrderLifecycleEnv(**kwargs)
+
+
+def _build_issue_workflow(spec: Mapping[str, Any]) -> IssueWorkflowEnv:
+    task, verifier = _task_and_verifier(
+        spec, "webarena_verified_adapted_446", "issue_goal_state"
+    )
+    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
+    if "instruction" in task:
+        kwargs["instruction"] = str(task["instruction"])
+    return IssueWorkflowEnv(**kwargs)
+
+
+def _build_calendar_email(spec: Mapping[str, Any]) -> CalendarEmailEnv:
+    task, verifier = _task_and_verifier(
+        spec, "workbench_multidomain_adapted_151", "calendar_email_goal_state"
+    )
+    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
+    if "instruction" in task:
+        kwargs["instruction"] = str(task["instruction"])
+    return CalendarEmailEnv(**kwargs)
+
+
+def _build_code_repair(spec: Mapping[str, Any]) -> CodeRepairEnv:
+    task, verifier = _task_and_verifier(
+        spec,
+        "swebench_lite_adapted_astropy_14365",
+        "test_patch_verifier",
+    )
+    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
+    if "instruction" in task:
+        kwargs["instruction"] = str(task["instruction"])
+    return CodeRepairEnv(**kwargs)
+
+
 def _build_require_argument(config: Mapping[str, Any]) -> RequireArgumentRule:
     return RequireArgumentRule(
         tool=str(config["tool"]),
@@ -130,7 +194,15 @@ def _build_stale_read(config: Mapping[str, Any]) -> StaleReadAfterWriteRule:
 
 
 register_environment("item", _build_item)
+register_environment("order_api", _build_order_lifecycle)
+register_environment("issue_tracker", _build_issue_workflow)
+register_environment("workplace_apps", _build_calendar_email)
+register_environment("code_repository", _build_code_repair)
 register_verifier("exactly_once", lambda _: ExactlyOnceVerifier())
+register_verifier("order_goal_state", lambda _: OrderGoalVerifier())
+register_verifier("issue_goal_state", lambda _: IssueGoalVerifier())
+register_verifier("calendar_email_goal_state", lambda _: CalendarEmailGoalVerifier())
+register_verifier("test_patch_verifier", lambda _: CodeRepairGoalVerifier())
 register_action_rule("require_argument", _build_require_argument)
 register_transition_rule("post_commit_timeout", _build_post_commit_timeout)
 register_observation_rule("stale_read_after_write", _build_stale_read)

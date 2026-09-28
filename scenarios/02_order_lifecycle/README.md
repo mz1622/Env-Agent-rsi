@@ -12,6 +12,8 @@ Agent 根据订单状态、商品、付款方式和用户约束，执行取消�
 - τ-bench 的零售 policy 明确规定 pending/delivered 状态、取消理由、退款方式和某些修改工具只能调用一次：<https://github.com/sierra-research/tau-bench/blob/main/tau_bench/envs/retail/wiki.md>
 - AppWorld 提供本地可控应用、API、数据库和状态单元测试：<https://arxiv.org/abs/2407.18901>
 
+本目录的可执行任务具体改编自 τ-bench `tasks.py` 的 `tasks[66]`：Aarav Lee 希望把 luggage set 换成 coat，如果不可行则取消订单。这里保留身份验证、读取订单、禁止不兼容替换、取消、原路退款和 collateral-damage 检查，并替换了原 benchmark 的合成 ID。来源定位写在 `task.json`，因此它不是对 τ-bench 原环境的逐字复制。
+
 ## 哪些工作用了这个问题
 
 - τ-bench 使用 retail 和 airline 场景研究 Agent、用户、policy 与工具之间的交互。
@@ -36,3 +38,13 @@ Agent 根据订单状态、商品、付款方式和用户约束，执行取消�
 
 课程只改变信息和交互辅助，不改变最终订单目标与 collateral-damage 检查。
 
+## 可执行实现
+
+- 任务配置：[`task.json`](task.json)
+- 环境：`src/env_agent_rsi/environments/order_lifecycle.py`
+- verifier：`src/env_agent_rsi/verifiers/order_goal.py`
+- Oracle：`src/env_agent_rsi/scenario_agents.py::order_oracle`
+
+```bash
+env-agent-rsi-task scenarios/02_order_lifecycle/task.json --agent oracle
+```

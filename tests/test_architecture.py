@@ -33,7 +33,15 @@ class RegistryTests(unittest.TestCase):
     def test_builtin_components_are_discoverable(self) -> None:
         components = available_components()
         self.assertIn("item", components["environments"])
+        self.assertIn("order_api", components["environments"])
+        self.assertIn("issue_tracker", components["environments"])
+        self.assertIn("workplace_apps", components["environments"])
+        self.assertIn("code_repository", components["environments"])
         self.assertIn("exactly_once", components["verifiers"])
+        self.assertIn("order_goal_state", components["verifiers"])
+        self.assertIn("issue_goal_state", components["verifiers"])
+        self.assertIn("calendar_email_goal_state", components["verifiers"])
+        self.assertIn("test_patch_verifier", components["verifiers"])
         self.assertIn("require_argument", components["action_rules"])
         self.assertIn("post_commit_timeout", components["transition_rules"])
         self.assertIn("stale_read_after_write", components["observation_rules"])
@@ -94,6 +102,11 @@ class ScenarioCatalogTests(unittest.TestCase):
             ids.add(manifest["id"])
             self.assertTrue(manifest["actions"])
             self.assertTrue(manifest["related_benchmarks"])
+            self.assertEqual(manifest["status"], "implemented")
+            self.assertTrue((directory / "task.json").is_file())
+            task = json.loads((directory / "task.json").read_text(encoding="utf-8"))
+            self.assertEqual(task["schema_version"], 1)
+            self.assertIn("provenance", task["task"])
 
 
 if __name__ == "__main__":

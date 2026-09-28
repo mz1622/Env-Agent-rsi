@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "environment": {"type": "item", "parameters": {"page_size": 2}},
+  "task": {
+    "id": "local_exactly_once_write_v1",
+    "target_value": "target-item",
+    "provenance": {
+      "kind": "local_minimal_adaptation",
+      "source_urls": [
+        "https://docs.stripe.com/api/idempotent_requests",
+        "https://aws.amazon.com/builders-library/making-retries-safe-with-idempotent-APIs/"
+      ]
+    }
+  },
+  "verifier": {"type": "exactly_once"},
+  "rules": {"action": [], "transition": [], "observation": []}
+}

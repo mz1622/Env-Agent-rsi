@@ -12,6 +12,8 @@ Agent 根据 issue 描述在真实或缩小的代码仓库中定位问题、修�
 - SWE-bench Verified 通过人工核验提高问题与测试的一致性：<https://openai.com/index/introducing-swe-bench-verified/>
 - LiveCodeBench 提供持续更新、控制污染的代码能力评价，可作为函数级和新鲜任务补充：<https://arxiv.org/abs/2403.07974>
 
+本目录的可执行 mini-repo 是 SWE-bench Lite 实例 `astropy__astropy-14365` 的语义缩小版；上游 issue 是 Astropy #14365：QDP 命令本应大小写不敏感，但读取器只接受大写。这里重新实现了一个只使用 Python 标准库的两文件仓库，保留 lower-case FAIL_TO_PASS 与 upper-case PASS_TO_PASS 行为，但不复制 Astropy 仓库，也不向 Agent 提供 gold patch。
+
 ## 哪些工作用了这个问题
 
 - Darwin Gödel Machine 在 SWE-bench 和 Polyglot 上评价自修改 Coding Agent：<https://arxiv.org/abs/2505.22954>
@@ -38,3 +40,16 @@ Agent 根据 issue 描述在真实或缩小的代码仓库中定位问题、修�
 
 课程不得把 gold diff、PR 评论中的答案或隐藏测试内容放进 observation。代码场景运行慢且容易出现依赖与 flaky-test 噪声，因此排在状态化 API 场景之后。
 
+## 可执行实现
+
+- 任务配置：[`task.json`](task.json)
+- mini-repo 与测试：`src/env_agent_rsi/code_tasks/qdp_case.py`
+- 环境：`src/env_agent_rsi/environments/code_repair.py`
+- verifier：`src/env_agent_rsi/verifiers/code_repair_goal.py`
+- Oracle：`src/env_agent_rsi/scenario_agents.py::code_repair_oracle`
+
+测试代码会在一次性临时目录的独立 Python 进程中执行；这是研究用隔离，不是面向不可信代码的安全沙箱。
+
+```bash
+env-agent-rsi-task scenarios/05_code_repair/task.json --agent oracle
+```

@@ -12,6 +12,8 @@ Verifier 检查唯一事件、参会者、时间、时区、会议时长和唯�
 - ToolSandbox 提供联系人、消息、提醒、时间等带状态依赖的交互式工具任务：<https://arxiv.org/abs/2408.04682>
 - AppWorld 提供 Gmail、Todoist、Phone 等本地应用和状态 evaluator，可用于相邻的跨应用任务：<https://github.com/StonyBrookNLP/appworld>
 
+本目录的具体样本改编自 WorkBench `multi_domain_tasks_and_outcomes.csv` 的零基数据行 151：Leila 有 overdue tasks 时，在第二天最早空闲时间创建 30 分钟会议，并发送指定主题和正文的邮件。最小环境把条件预先设为 true，但保留原任务的联系人、事件标题、收件人、邮件内容、时长和 `13:00` 最早空闲结果。
+
 ## 哪些工作用了这个问题
 
 - WorkBench 直接以 workplace email 与 meeting scheduling 评价规划、工具选择和多动作执行。
@@ -38,3 +40,13 @@ Verifier 检查唯一事件、参会者、时间、时区、会议时长和唯�
 
 这是首批场景中最典型的 Chain：邮件步骤依赖创建事件的真实结果，因此应在前三个单应用场景稳定后再实现。
 
+## 可执行实现
+
+- 任务配置：[`task.json`](task.json)
+- 环境：`src/env_agent_rsi/environments/calendar_email.py`
+- verifier：`src/env_agent_rsi/verifiers/calendar_email_goal.py`
+- Oracle：`src/env_agent_rsi/scenario_agents.py::calendar_email_oracle`
+
+```bash
+env-agent-rsi-task scenarios/04_calendar_email/task.json --agent oracle
+```

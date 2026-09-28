@@ -10,6 +10,32 @@ from env_agent_rsi.core.protocol import (
     JsonObject,
 )
 from env_agent_rsi.core.verifier import StateVerifier
+from env_agent_rsi.environments.base import tool
+
+
+ITEM_TOOLS = [
+    tool(
+        "list_items",
+        "List items using cursor pagination.",
+        {"cursor": {"type": "integer"}, "limit": {"type": "integer"}},
+    ),
+    tool(
+        "get_item",
+        "Read one item by numeric id.",
+        {"id": {"type": "integer"}},
+        ["id"],
+    ),
+    tool(
+        "append_item",
+        "Append one value, optionally with a stable idempotency key.",
+        {
+            "value": {"type": "string"},
+            "idempotency_key": {"type": "string"},
+        },
+        ["value"],
+    ),
+    tool("finish", "Finish the task and run the independent verifier.", {}),
+]
 
 
 class ItemEnv:
@@ -46,7 +72,7 @@ class ItemEnv:
             observation={
                 "ok": True,
                 "task": f"Append value {self.target_value!r} exactly once, then finish.",
-                "tools": ["list_items", "get_item", "append_item", "finish"],
+                "tools": deepcopy(ITEM_TOOLS),
             },
             info={"event": "reset", "seed": seed},
         )

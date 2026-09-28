@@ -11,7 +11,7 @@ dependencies = []
 
 [project.scripts]
 env-agent-rsi-demo = "env_agent_rsi.demo:main"
+env-agent-rsi-task = "env_agent_rsi.run_task:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
