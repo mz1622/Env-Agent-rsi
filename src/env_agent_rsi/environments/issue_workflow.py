@@ -1,3 +1,9 @@
+"""多步骤 issue 工作流环境。
+
+环境提供相似 issue 与用户作为检索干扰，写操作覆盖分配、评论和状态推进；状态结构
+与工具契约局部封装，verifier 精确检查目标 issue 并保护其他记录。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy

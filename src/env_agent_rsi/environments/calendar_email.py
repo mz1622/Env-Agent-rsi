@@ -1,3 +1,9 @@
+"""日历预约与邮件通知的跨应用环境。
+
+环境模拟联系人、忙闲日历、事件和邮件两个副作用域，工具按真实依赖顺序工作；独立
+verifier 检查最早空闲时间、唯一事件、唯一邮件和 collateral damage。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy

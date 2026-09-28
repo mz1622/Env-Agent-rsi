@@ -1,9 +1,16 @@
+"""环境变换扩展点的协议定义。
+
+ContractRule 改变 Agent 可见工具契约并同步执行校验；Action/Transition/
+ObservationRule 分别实现 f_A、f_T、f_O。所有有状态规则必须支持 reset 与快照，
+保证环境搜索节点可复放。
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Mapping, Protocol
 
-from env_agent_rsi.core.protocol import Action, EnvResponse, JsonObject
+from env_agent_rsi.core.protocol import Action, EnvDescriptor, EnvResponse, JsonObject
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,18 @@ class StatefulRule(Protocol):
 
 class ActionRule(StatefulRule, Protocol):
     def before_step(self, state: Mapping[str, Any], action: Action) -> ActionDecision:
+        ...
+
+
+class ContractRule(StatefulRule, Protocol):
+    def transform_descriptor(
+        self, descriptor: EnvDescriptor, state: Mapping[str, Any]
+    ) -> EnvDescriptor:
+        ...
+
+    def validate_action(
+        self, state: Mapping[str, Any], action: Action
+    ) -> EnvResponse | None:
         ...
 
 

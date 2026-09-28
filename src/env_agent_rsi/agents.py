@@ -1,3 +1,9 @@
+"""Exactly-once 场景的确定性基线策略。
+
+本文件保留 naive 与 oracle 两条可解释策略，用于验证故障语义和 verifier，而不承担
+通用模型执行；真实 ModelClient episode 由 ``agent_runtime`` 负责。
+"""
+
 from __future__ import annotations
 
 from typing import Callable

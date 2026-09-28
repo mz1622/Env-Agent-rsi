@@ -1,3 +1,9 @@
+"""五个可执行 scenario 的端到端测试。
+
+检查 manifest/tool schema 对齐、Oracle 可解性、确定性快照、collateral-damage 拒绝
+以及代码任务从 FAIL_TO_PASS 到通过的真实过程。
+"""
+
 from __future__ import annotations
 
 import json

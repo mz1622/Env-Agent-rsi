@@ -13,5 +13,5 @@
     }
   },
   "verifier": {"type": "exactly_once"},
-  "rules": {"action": [], "transition": [], "observation": []}
+  "rules": {"contract": [], "action": [], "transition": [], "observation": []}
 }

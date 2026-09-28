@@ -1,3 +1,9 @@
+"""Agent 可见 observation 的 f_O 规则。
+
+规则只修改返回给 Agent 的视图，不改变基础环境真实状态；内部计数可快照，从而保证
+陈旧读取等时序故障能够确定性回放。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy

@@ -1,3 +1,10 @@
+"""Exactly-once 写入微环境。
+
+该环境用最小状态化 API 重现提交后超时、幂等重试和陈旧读取问题；它拥有自己的
+工具契约与真实状态，但把故障注入交给外层 RuleHarness，便于同一任务组合不同环境
+节点。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -5,11 +12,17 @@ from typing import Any, Mapping
 
 from env_agent_rsi.core.protocol import (
     Action,
+    EnvDescriptor,
     EnvResponse,
     EvaluationResult,
     JsonObject,
 )
 from env_agent_rsi.core.verifier import StateVerifier
+from env_agent_rsi.core.tooling import (
+    ActionValidationError,
+    make_descriptor,
+    validate_action,
+)
 from env_agent_rsi.environments.base import tool
 
 
@@ -54,6 +67,14 @@ class ItemEnv:
         self.verifier = verifier
         self.reset()
 
+    def describe(self) -> EnvDescriptor:
+        return make_descriptor(
+            task_id="local_exactly_once_write_v1",
+            instruction=f"Append value {self.target_value!r} exactly once, then finish.",
+            tools=ITEM_TOOLS,
+            metadata={"environment": type(self).__name__},
+        )
+
     def reset(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
     ) -> EnvResponse:
@@ -68,18 +89,20 @@ class ItemEnv:
         self.next_id = 2
         self.step_count = 0
         self.terminated = False
+        descriptor = self.describe()
         return EnvResponse(
-            observation={
-                "ok": True,
-                "task": f"Append value {self.target_value!r} exactly once, then finish.",
-                "tools": deepcopy(ITEM_TOOLS),
-            },
+            observation={"ok": True, **descriptor.to_dict()},
             info={"event": "reset", "seed": seed},
         )
 
     def step(self, action: Action) -> EnvResponse:
         if self.terminated:
             return self._error("EPISODE_TERMINATED", "finish has already been called")
+
+        try:
+            validate_action(action, self.describe())
+        except ActionValidationError as exc:
+            return self._error(exc.code, exc.message)
 
         self.step_count += 1
         handlers = {

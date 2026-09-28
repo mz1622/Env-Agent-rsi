@@ -1,3 +1,9 @@
+"""代码修复任务的提交 verifier。
+
+Verifier 在真实文件快照上重新运行测试，并检查提交标志、文件集合和 README 未被
+篡改；Agent 可见的 run_tests 输出不能直接决定成功。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

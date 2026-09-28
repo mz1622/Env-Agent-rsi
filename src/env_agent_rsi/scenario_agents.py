@@ -1,3 +1,9 @@
+"""各业务场景的确定性 Oracle 策略。
+
+Oracle 只用于证明环境可解和 verifier 可达，按公共 ActionableEnv 协议调用工具；它们
+不是训练对象，也不会把参考轨迹暴露给 Target Agent。
+"""
+
 from __future__ import annotations
 
 from typing import Callable

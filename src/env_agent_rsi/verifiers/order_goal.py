@@ -1,3 +1,9 @@
+"""订单取消与退款目标的状态 verifier。
+
+验证指定订单的合法取消理由、退款金额和退款渠道，并保护其他订单、用户与支付方式；
+它只评价最终业务状态，不把固定 Oracle 步骤当作成功条件。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

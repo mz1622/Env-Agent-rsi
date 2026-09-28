@@ -12,5 +12,5 @@
     }
   },
   "verifier": {"type": "calendar_email_goal_state"},
-  "rules": {"action": [], "transition": [], "observation": []}
+  "rules": {"contract": [], "action": [], "transition": [], "observation": []}
 }

@@ -1,3 +1,9 @@
+"""Exactly-once 写入任务的状态 verifier。
+
+通过真实 items 快照检查目标恰好出现一次、初始数据保持不变且 episode 已结束，专门
+捕获 timeout 后盲目重试造成的重复副作用。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

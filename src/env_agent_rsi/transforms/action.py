@@ -1,3 +1,9 @@
+"""执行前 f_A 动作规则。
+
+本文件的 guard 只在调用发生时阻止危险 action，因此约束对 Agent 默认是隐藏的；若
+辅助环境需要在调用前公开 required 参数，应使用 ``transforms.contract``。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

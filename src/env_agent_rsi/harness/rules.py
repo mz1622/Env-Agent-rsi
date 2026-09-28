@@ -1,16 +1,17 @@
-"""Compatibility exports.
+"""规则导入路径的兼容层。
 
-New code should import rule protocols and implementations from
-``env_agent_rsi.transforms``. This module remains so existing integrations do
-not break during the package reorganization.
+新代码应从 ``env_agent_rsi.transforms`` 导入；本文件只保留旧导入路径，避免代码
+重组时破坏已有集成。
 """
 
 from env_agent_rsi.transforms import (
     ActionDecision,
     ActionRule,
+    ContractRule,
     ObservationRule,
     PostCommitTimeoutRule,
     RequireArgumentRule,
+    RequireArgumentContractRule,
     StaleReadAfterWriteRule,
     TransitionRule,
 )
@@ -18,9 +19,11 @@ from env_agent_rsi.transforms import (
 __all__ = [
     "ActionDecision",
     "ActionRule",
+    "ContractRule",
     "ObservationRule",
     "PostCommitTimeoutRule",
     "RequireArgumentRule",
+    "RequireArgumentContractRule",
     "StaleReadAfterWriteRule",
     "TransitionRule",
 ]

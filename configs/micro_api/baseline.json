@@ -13,6 +13,7 @@
     "type": "exactly_once"
   },
   "rules": {
+    "contract": [],
     "action": [],
     "transition": [],
     "observation": []

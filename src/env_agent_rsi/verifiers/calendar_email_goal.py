@@ -1,3 +1,9 @@
+"""日历与邮件任务的结果 verifier。
+
+直接读取真实事件、邮件和参考数据，检查唯一性、最早时间、精确内容与旁路状态，不
+依赖 Agent 是否调用过某个查询工具。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

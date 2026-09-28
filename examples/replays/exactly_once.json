@@ -1,0 +1,13 @@
+[
+  {
+    "tool": "append_item",
+    "arguments": {
+      "value": "target-item",
+      "idempotency_key": "replay-target-item"
+    }
+  },
+  {
+    "tool": "finish",
+    "arguments": {}
+  }
+]

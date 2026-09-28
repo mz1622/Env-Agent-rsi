@@ -1,3 +1,9 @@
+"""Exactly-once 微环境的故障语义测试。
+
+覆盖确定性 reset、提交后超时、陈旧读取、naive 重复写入、Oracle 成功和规则状态的
+snapshot round-trip。
+"""
+
 from __future__ import annotations
 
 import json

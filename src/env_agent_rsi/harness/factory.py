@@ -1,3 +1,9 @@
+"""配置到运行环境的装配工厂。
+
+本模块维护环境、verifier、contract 与 f_A/f_T/f_O 的显式注册表，根据 task.json
+构建完整 RuleHarness。新增组件通过注册函数接入，runner 不需要出现业务分支。
+"""
+
 from __future__ import annotations
 
 import json
@@ -17,8 +23,10 @@ from env_agent_rsi.harness.wrapper import RuleHarness
 from env_agent_rsi.micro_api.item_env import ItemEnv
 from env_agent_rsi.transforms import (
     ActionRule,
+    ContractRule,
     ObservationRule,
     PostCommitTimeoutRule,
+    RequireArgumentContractRule,
     RequireArgumentRule,
     StaleReadAfterWriteRule,
     TransitionRule,
@@ -35,6 +43,7 @@ from env_agent_rsi.verifiers import (
 ENVIRONMENTS = ComponentRegistry[ActionableEnv]("environment")
 VERIFIERS = ComponentRegistry[StateVerifier]("verifier")
 ACTION_RULES = ComponentRegistry[ActionRule]("action rule")
+CONTRACT_RULES = ComponentRegistry[ContractRule]("contract rule")
 TRANSITION_RULES = ComponentRegistry[TransitionRule]("transition rule")
 OBSERVATION_RULES = ComponentRegistry[ObservationRule]("observation rule")
 
@@ -49,6 +58,10 @@ def register_verifier(name: str, builder: Builder[StateVerifier]) -> None:
 
 def register_action_rule(name: str, builder: Builder[ActionRule]) -> None:
     ACTION_RULES.register(name, builder)
+
+
+def register_contract_rule(name: str, builder: Builder[ContractRule]) -> None:
+    CONTRACT_RULES.register(name, builder)
 
 
 def register_transition_rule(name: str, builder: Builder[TransitionRule]) -> None:
@@ -73,11 +86,13 @@ def build_environment(spec: Mapping[str, Any]) -> RuleHarness:
     base = ENVIRONMENTS.build(environment_type, spec)
 
     rules = dict(spec.get("rules", {}))
+    contract_rules = _build_rules(CONTRACT_RULES, rules.get("contract", []))
     action_rules = _build_rules(ACTION_RULES, rules.get("action", []))
     transition_rules = _build_rules(TRANSITION_RULES, rules.get("transition", []))
     observation_rules = _build_rules(OBSERVATION_RULES, rules.get("observation", []))
     return RuleHarness(
         base,
+        contract_rules=contract_rules,
         action_rules=action_rules,
         transition_rules=transition_rules,
         observation_rules=observation_rules,
@@ -88,6 +103,7 @@ def available_components() -> dict[str, tuple[str, ...]]:
     return {
         "environments": ENVIRONMENTS.names(),
         "verifiers": VERIFIERS.names(),
+        "contract_rules": CONTRACT_RULES.names(),
         "action_rules": ACTION_RULES.names(),
         "transition_rules": TRANSITION_RULES.names(),
         "observation_rules": OBSERVATION_RULES.names(),
@@ -180,6 +196,17 @@ def _build_require_argument(config: Mapping[str, Any]) -> RequireArgumentRule:
     )
 
 
+def _build_require_argument_contract(
+    config: Mapping[str, Any],
+) -> RequireArgumentContractRule:
+    return RequireArgumentContractRule(
+        tool=str(config["tool"]),
+        argument=str(config["argument"]),
+        error_code=str(config.get("error_code", "REQUIRED_ARGUMENT_MISSING")),
+        message=str(config["message"]) if "message" in config else None,
+    )
+
+
 def _build_post_commit_timeout(
     config: Mapping[str, Any],
 ) -> PostCommitTimeoutRule:
@@ -203,6 +230,7 @@ register_verifier("order_goal_state", lambda _: OrderGoalVerifier())
 register_verifier("issue_goal_state", lambda _: IssueGoalVerifier())
 register_verifier("calendar_email_goal_state", lambda _: CalendarEmailGoalVerifier())
 register_verifier("test_patch_verifier", lambda _: CodeRepairGoalVerifier())
+register_contract_rule("require_argument", _build_require_argument_contract)
 register_action_rule("require_argument", _build_require_argument)
 register_transition_rule("post_commit_timeout", _build_post_commit_timeout)
 register_observation_rule("stale_read_after_write", _build_stale_read)

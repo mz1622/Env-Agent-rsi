@@ -1,3 +1,9 @@
+"""SWE-bench QDP 大小写问题的最小可执行快照。
+
+模块保存初始源码并在一次性目录的独立进程中运行 FAIL_TO_PASS/PASS_TO_PASS 测试，
+用于快速研究代码环境演化；该隔离保证复现性，但不构成恶意代码安全沙箱。
+"""
+
 from __future__ import annotations
 
 import json

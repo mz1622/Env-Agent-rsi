@@ -1,3 +1,9 @@
+"""可插拔组件的显式注册表。
+
+Factory 通过名称解析环境、verifier 和各阶段规则；注册表拒绝意外重名，使扩展行为
+可发现、可测试，并避免中央 if/elif 随场景增长。
+"""
+
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping

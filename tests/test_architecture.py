@@ -1,6 +1,13 @@
+"""组件注册、规则组合和 scenario 元数据的架构测试。
+
+这些测试约束插件发现、重复注册、contract guard、快照恢复和目录清单，防止扩展新
+实现时破坏公共装配边界。
+"""
+
 from __future__ import annotations
 
 import json
+import ast
 import unittest
 from pathlib import Path
 
@@ -42,6 +49,7 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("issue_goal_state", components["verifiers"])
         self.assertIn("calendar_email_goal_state", components["verifiers"])
         self.assertIn("test_patch_verifier", components["verifiers"])
+        self.assertIn("require_argument", components["contract_rules"])
         self.assertIn("require_argument", components["action_rules"])
         self.assertIn("post_commit_timeout", components["transition_rules"])
         self.assertIn("stale_read_after_write", components["observation_rules"])
@@ -107,6 +115,22 @@ class ScenarioCatalogTests(unittest.TestCase):
             task = json.loads((directory / "task.json").read_text(encoding="utf-8"))
             self.assertEqual(task["schema_version"], 1)
             self.assertIn("provenance", task["task"])
+
+
+class ModuleDocumentationTests(unittest.TestCase):
+    def test_every_python_file_starts_with_chinese_design_docstring(self) -> None:
+        python_files = sorted((ROOT / "src").rglob("*.py")) + sorted(
+            (ROOT / "tests").rglob("*.py")
+        )
+        self.assertTrue(python_files)
+        for path in python_files:
+            module = ast.parse(path.read_text(encoding="utf-8"))
+            docstring = ast.get_docstring(module, clean=False)
+            self.assertTrue(docstring, path)
+            self.assertTrue(
+                any("\u4e00" <= character <= "\u9fff" for character in docstring),
+                path,
+            )
 
 
 if __name__ == "__main__":

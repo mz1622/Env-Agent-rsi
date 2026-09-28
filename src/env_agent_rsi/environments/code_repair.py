@@ -1,3 +1,9 @@
+"""Repository-level 代码修复环境。
+
+环境把内存中的 mini repository 暴露为搜索、读取、编辑、测试和提交工具；编辑范围
+受控，测试在独立进程执行，最终成功仍由 verifier 对真实文件重新计算。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy

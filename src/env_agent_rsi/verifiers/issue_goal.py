@@ -1,3 +1,9 @@
+"""Issue 多步骤目标的状态 verifier。
+
+精确验证目标 issue 的 assignee、唯一评论和状态，同时比较其他 issue 与用户参考表，
+防止搜索歧义导致 collateral modification。
+"""
+
 from __future__ import annotations
 
 from typing import Any, Mapping

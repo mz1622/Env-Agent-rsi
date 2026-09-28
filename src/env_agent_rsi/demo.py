@@ -1,3 +1,9 @@
+"""Exactly-once 微环境的旧版演示入口。
+
+该命令只比较 naive 与 scripted oracle，便于快速展示 post-commit timeout 的重复写入
+风险；统一场景、外部 Agent 和 replay 应使用 ``run_task.py``。
+"""
+
 from __future__ import annotations
 
 import argparse

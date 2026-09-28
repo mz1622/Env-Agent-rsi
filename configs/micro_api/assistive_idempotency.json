@@ -13,7 +13,7 @@
     "type": "exactly_once"
   },
   "rules": {
-    "action": [
+    "contract": [
       {
         "type": "require_argument",
         "tool": "append_item",
@@ -22,6 +22,7 @@
         "message": "Use a stable idempotency_key before performing this write."
       }
     ],
+    "action": [],
     "transition": [],
     "observation": []
   }

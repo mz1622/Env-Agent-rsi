@@ -1,3 +1,9 @@
+"""订单生命周期与退款环境。
+
+该环境实现身份验证、订单检索、条件修改、取消和退款确认，保留业务 policy 与不可逆
+副作用；Agent 只能通过工具观察数据，verifier 另外检查目标订单和旁路状态。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy

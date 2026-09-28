@@ -12,5 +12,5 @@
     }
   },
   "verifier": {"type": "issue_goal_state"},
-  "rules": {"action": [], "transition": [], "observation": []}
+  "rules": {"contract": [], "action": [], "transition": [], "observation": []}
 }

@@ -1,3 +1,10 @@
+"""状态型本地环境的公共骨架。
+
+子类只负责初始业务状态和工具 handler；本类统一处理 descriptor、reset、action
+路由、审计、结束、快照与 verifier 调用。这样不同任务共享生命周期语义，同时不
+共享业务数据结构。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy
@@ -5,11 +12,18 @@ from typing import Any, Callable, Mapping
 
 from env_agent_rsi.core.protocol import (
     Action,
+    EnvDescriptor,
     EnvResponse,
     EvaluationResult,
     JsonObject,
 )
 from env_agent_rsi.core.verifier import StateVerifier
+from env_agent_rsi.core.tooling import (
+    ActionValidationError,
+    make_descriptor,
+    tool_schema,
+    validate_action,
+)
 
 
 class StatefulTaskEnv:
@@ -37,6 +51,14 @@ class StatefulTaskEnv:
     def handlers(self) -> Mapping[str, Callable[[JsonObject], EnvResponse]]:
         raise NotImplementedError
 
+    def describe(self) -> EnvDescriptor:
+        return make_descriptor(
+            task_id=self.task_id,
+            instruction=self.instruction,
+            tools=self.tool_schemas,
+            metadata={"environment": type(self).__name__},
+        )
+
     def reset(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
     ) -> EnvResponse:
@@ -46,19 +68,19 @@ class StatefulTaskEnv:
         self.audit_log: list[JsonObject] = []
         self.step_count = 0
         self.terminated = False
+        descriptor = self.describe()
         return EnvResponse(
-            observation={
-                "ok": True,
-                "task_id": self.task_id,
-                "task": self.instruction,
-                "tools": deepcopy(self.tool_schemas),
-            },
+            observation={"ok": True, **descriptor.to_dict()},
             info={"event": "reset", "seed": seed},
         )
 
     def step(self, action: Action) -> EnvResponse:
         if self.terminated:
             return self.error("EPISODE_TERMINATED", "finish has already been called")
+        try:
+            validate_action(action, self.describe())
+        except ActionValidationError as exc:
+            return self.error(exc.code, exc.message)
         self.step_count += 1
         handler = self.handlers().get(action.tool)
         if handler is None:
@@ -148,24 +170,5 @@ class StatefulTaskEnv:
         self.terminated = bool(snapshot["terminated"])
 
 
-def tool(
-    name: str,
-    description: str,
-    properties: JsonObject,
-    required: list[str] | None = None,
-) -> JsonObject:
-    """Build a compact OpenAI-compatible function schema for an environment tool."""
-
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": deepcopy(properties),
-                "required": list(required or []),
-                "additionalProperties": False,
-            },
-        },
-    }
+tool = tool_schema
+"""向后兼容的简写；具体 schema 构造逻辑集中在 ``core.tooling``。"""

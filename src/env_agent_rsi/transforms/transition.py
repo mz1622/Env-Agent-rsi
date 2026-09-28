@@ -1,3 +1,9 @@
+"""基础 transition 之后的 f_T 规则。
+
+本文件模拟“副作用已提交但客户端收到失败”等转移语义，规则接收前后真实状态与原始
+响应，只改变交互结果并记录可诊断 fault event。
+"""
+
 from __future__ import annotations
 
 from copy import deepcopy
