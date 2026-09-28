@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "issue_workflow",
+  "title": "Multi-step issue workflow",
+  "status": "design",
+  "actions": [
+    "search_issues",
+    "get_issue",
+    "search_users",
+    "assign_issue",
+    "add_comment",
+    "change_status",
+    "finish"
+  ],
+  "environment_type": "issue_tracker",
+  "verifier_type": "issue_goal_state",
+  "related_benchmarks": ["WebArena", "WebArena-Verified", "WorkArena", "WorkArena++"]
+}
+

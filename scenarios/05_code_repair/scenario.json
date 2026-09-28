@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "id": "code_repair",
+  "title": "Repository-level code repair",
+  "status": "design",
+  "actions": ["list_files", "search_code", "read_file", "edit_file", "run_tests", "submit"],
+  "environment_type": "code_repository",
+  "verifier_type": "test_patch_verifier",
+  "related_benchmarks": ["SWE-bench", "SWE-bench Verified", "LiveCodeBench", "Polyglot"]
+}
+

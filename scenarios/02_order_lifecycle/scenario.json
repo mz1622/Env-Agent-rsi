@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "id": "order_lifecycle",
+  "title": "Conditional order cancellation and modification",
+  "status": "design",
+  "actions": [
+    "authenticate_user",
+    "search_orders",
+    "get_order",
+    "get_payment_method",
+    "modify_order_items",
+    "cancel_order",
+    "get_refund",
+    "finish"
+  ],
+  "environment_type": "order_api",
+  "verifier_type": "order_goal_state",
+  "related_benchmarks": ["tau-bench", "tau3-bench", "AppWorld"]
+}
+

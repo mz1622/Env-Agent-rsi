@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "id": "calendar_email",
+  "title": "Calendar scheduling with email notification",
+  "status": "design",
+  "actions": [
+    "search_contacts",
+    "get_calendar",
+    "find_free_slots",
+    "create_event",
+    "get_event",
+    "send_email",
+    "finish"
+  ],
+  "environment_type": "workplace_apps",
+  "verifier_type": "calendar_email_goal_state",
+  "related_benchmarks": ["WorkBench", "ToolSandbox", "AppWorld", "OSWorld"]
+}
+

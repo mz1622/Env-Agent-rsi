@@ -3,7 +3,13 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Mapping
 
-from env_agent_rsi.core.protocol import Action, EnvResponse, EvaluationResult, JsonObject
+from env_agent_rsi.core.protocol import (
+    Action,
+    EnvResponse,
+    EvaluationResult,
+    JsonObject,
+)
+from env_agent_rsi.core.verifier import StateVerifier
 
 
 class ItemEnv:
@@ -11,9 +17,15 @@ class ItemEnv:
 
     SNAPSHOT_VERSION = 1
 
-    def __init__(self, target_value: str = "target-item", page_size: int = 2):
+    def __init__(
+        self,
+        verifier: StateVerifier,
+        target_value: str = "target-item",
+        page_size: int = 2,
+    ):
         self.target_value = target_value
         self.page_size = page_size
+        self.verifier = verifier
         self.reset()
 
     def reset(
@@ -169,27 +181,7 @@ class ItemEnv:
         }
 
     def evaluate(self) -> EvaluationResult:
-        target_count = sum(item["value"] == self.target_value for item in self.items)
-        initial_unchanged = self.items[: len(self.initial_items)] == self.initial_items
-        success = self.terminated and target_count == 1 and initial_unchanged
-        if not self.terminated:
-            reason = "episode is not finished"
-        elif target_count != 1:
-            reason = f"target value occurs {target_count} times; expected exactly once"
-        elif not initial_unchanged:
-            reason = "an initial item was modified"
-        else:
-            reason = "target exists exactly once and prior state is intact"
-        return EvaluationResult(
-            success=success,
-            reason=reason,
-            metrics={
-                "target_count": target_count,
-                "total_items": len(self.items),
-                "initial_unchanged": initial_unchanged,
-                "tool_steps": self.step_count,
-            },
-        )
+        return self.verifier.evaluate(self.save_state())
 
     def get_env_state(self) -> JsonObject:
         return deepcopy(self.save_state())
@@ -220,4 +212,3 @@ class ItemEnv:
         self.next_id = int(snapshot["next_id"])
         self.step_count = int(snapshot["step_count"])
         self.terminated = bool(snapshot["terminated"])
-

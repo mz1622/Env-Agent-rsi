@@ -13,19 +13,16 @@
     "type": "exactly_once"
   },
   "rules": {
-    "action": [],
-    "transition": [
+    "action": [
       {
-        "type": "post_commit_timeout",
+        "type": "require_argument",
         "tool": "append_item",
-        "trigger_on_nth": 1
+        "argument": "idempotency_key",
+        "error_code": "IDEMPOTENCY_KEY_REQUIRED",
+        "message": "Use a stable idempotency_key before performing this write."
       }
     ],
-    "observation": [
-      {
-        "type": "stale_read_after_write",
-        "stale_reads": 1
-      }
-    ]
+    "transition": [],
+    "observation": []
   }
 }

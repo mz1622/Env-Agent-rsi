@@ -1,0 +1,100 @@
+from __future__ import annotations
+
+import json
+import unittest
+from pathlib import Path
+
+from env_agent_rsi.core.protocol import Action
+from env_agent_rsi.core.registry import ComponentRegistry
+from env_agent_rsi.harness.factory import (
+    available_components,
+    build_environment,
+    load_spec,
+)
+
+
+ROOT = Path(__file__).resolve().parents[1]
+ASSISTIVE = ROOT / "configs/micro_api/assistive_idempotency.json"
+SCENARIOS = ROOT / "scenarios"
+
+
+class RegistryTests(unittest.TestCase):
+    def test_registry_builds_registered_component(self) -> None:
+        registry = ComponentRegistry[dict]("test")
+        registry.register("example", lambda config: {"value": config["value"]})
+        self.assertEqual(registry.build("example", {"value": 3}), {"value": 3})
+
+    def test_registry_rejects_duplicate_names(self) -> None:
+        registry = ComponentRegistry[object]("test")
+        registry.register("example", lambda config: object())
+        with self.assertRaisesRegex(ValueError, "already registered"):
+            registry.register("example", lambda config: object())
+
+    def test_builtin_components_are_discoverable(self) -> None:
+        components = available_components()
+        self.assertIn("item", components["environments"])
+        self.assertIn("exactly_once", components["verifiers"])
+        self.assertIn("require_argument", components["action_rules"])
+        self.assertIn("post_commit_timeout", components["transition_rules"])
+        self.assertIn("stale_read_after_write", components["observation_rules"])
+
+
+class ActionRuleTests(unittest.TestCase):
+    def test_guard_blocks_unsafe_write_before_state_change(self) -> None:
+        env = build_environment(load_spec(ASSISTIVE))
+        env.reset(seed=0)
+        response = env.step(Action("append_item", {"value": "target-item"}))
+        self.assertEqual(
+            response.observation["error"]["code"], "IDEMPOTENCY_KEY_REQUIRED"
+        )
+        self.assertEqual(env.get_env_state()["step_count"], 0)
+        self.assertFalse(
+            any(item["value"] == "target-item" for item in env.get_env_state()["items"])
+        )
+
+    def test_guard_allows_safe_write_and_round_trips_snapshot(self) -> None:
+        spec = load_spec(ASSISTIVE)
+        env = build_environment(spec)
+        env.reset(seed=0)
+        env.step(Action("append_item", {"value": "target-item"}))
+        response = env.step(
+            Action(
+                "append_item",
+                {"value": "target-item", "idempotency_key": "task:target-item"},
+            )
+        )
+        self.assertTrue(response.observation["ok"])
+
+        snapshot = env.save_state()
+        restored = build_environment(spec)
+        restored.load_state(snapshot)
+        self.assertEqual(restored.save_state(), snapshot)
+
+
+class ScenarioCatalogTests(unittest.TestCase):
+    def test_first_five_scenarios_have_docs_and_manifests(self) -> None:
+        directories = sorted(path for path in SCENARIOS.iterdir() if path.is_dir())
+        self.assertEqual(len(directories), 5)
+        required_headings = (
+            "## 任务是什么",
+            "## 来源是什么",
+            "## 哪些工作用了这个问题",
+            "## 哪些 benchmark 与它有关",
+        )
+        ids: set[str] = set()
+        for directory in directories:
+            readme = (directory / "README.md").read_text(encoding="utf-8")
+            for heading in required_headings:
+                self.assertIn(heading, readme, directory.name)
+            manifest = json.loads(
+                (directory / "scenario.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(manifest["schema_version"], 1)
+            self.assertNotIn(manifest["id"], ids)
+            ids.add(manifest["id"])
+            self.assertTrue(manifest["actions"])
+            self.assertTrue(manifest["related_benchmarks"])
+
+
+if __name__ == "__main__":
+    unittest.main()

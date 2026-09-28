@@ -30,7 +30,9 @@ class MinimalEnvironmentTests(unittest.TestCase):
         self.assertFalse(response.observation["ok"])
         self.assertEqual(response.observation["error"]["code"], "TIMEOUT")
         self.assertEqual(
-            sum(item["value"] == "target-item" for item in env.get_env_state()["items"]),
+            sum(
+                item["value"] == "target-item" for item in env.get_env_state()["items"]
+            ),
             1,
         )
 
@@ -40,8 +42,12 @@ class MinimalEnvironmentTests(unittest.TestCase):
         env.step(Action("append_item", {"value": "target-item"}))
         stale = env.step(Action("list_items", {"limit": 100}))
         fresh = env.step(Action("list_items", {"limit": 100}))
-        self.assertFalse(any(x["value"] == "target-item" for x in stale.observation["items"]))
-        self.assertTrue(any(x["value"] == "target-item" for x in fresh.observation["items"]))
+        self.assertFalse(
+            any(x["value"] == "target-item" for x in stale.observation["items"])
+        )
+        self.assertTrue(
+            any(x["value"] == "target-item" for x in fresh.observation["items"])
+        )
 
     def test_observe_also_uses_observation_rules(self) -> None:
         env = build_environment(load_spec(FAULTED))
