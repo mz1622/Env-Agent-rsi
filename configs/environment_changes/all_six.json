@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "environment": {
+    "type": "item",
+    "parameters": {
+      "page_size": 2
+    }
+  },
+  "task": {
+    "target_value": "target-item"
+  },
+  "verifier": {
+    "type": "exactly_once"
+  },
+  "rules": {
+    "setup": [
+      {
+        "type": "replay",
+        "actions": [
+          {
+            "tool": "list_items",
+            "arguments": {
+              "cursor": 0,
+              "limit": 1
+            }
+          }
+        ]
+      }
+    ],
+    "contract": [
+      {
+        "type": "require_argument",
+        "tool": "append_item",
+        "argument": "idempotency_key",
+        "error_code": "IDEMPOTENCY_KEY_REQUIRED"
+      }
+    ],
+    "action": [
+      {
+        "type": "require_argument",
+        "tool": "append_item",
+        "argument": "value",
+        "error_code": "VALUE_REQUIRED"
+      }
+    ],
+    "transition": [
+      {
+        "type": "post_commit_timeout",
+        "tool": "append_item",
+        "trigger_on_nth": 1
+      }
+    ],
+    "observation": [
+      {
+        "type": "stale_read_after_write",
+        "stale_reads": 1
+      }
+    ],
+    "budget": [
+      {
+        "type": "step_budget",
+        "max_steps": 8,
+        "max_writes": 2,
+        "write_tools": [
+          "append_item"
+        ]
+      }
+    ]
+  }
+}

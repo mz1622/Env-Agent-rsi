@@ -5,6 +5,9 @@
 """
 
 from .agent_runtime import AgentRunner, ModelClient, ModelOutput
+from .agent_system.diagnostic import DiagnosticAgent
+from .agent_system.target import TargetAgent
+from .benchmarks import BenchmarkAdapter, BenchmarkTask
 from .core.protocol import (
     Action,
     ActionableEnv,
@@ -13,16 +16,25 @@ from .core.protocol import (
     EvaluationResult,
 )
 from .harness.factory import build_environment, load_spec
+from .evolution import EnvironmentDAG, FailureSignature, MutationSpec, MutationSurface
 
 __all__ = [
     "Action",
     "ActionableEnv",
     "AgentRunner",
+    "BenchmarkAdapter",
+    "BenchmarkTask",
+    "DiagnosticAgent",
     "EnvDescriptor",
     "EnvResponse",
     "EvaluationResult",
+    "EnvironmentDAG",
+    "FailureSignature",
     "ModelClient",
     "ModelOutput",
+    "MutationSpec",
+    "MutationSurface",
+    "TargetAgent",
     "build_environment",
     "load_spec",
 ]

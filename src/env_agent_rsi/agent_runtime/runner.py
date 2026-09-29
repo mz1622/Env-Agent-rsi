@@ -7,12 +7,12 @@ info 仅进入诊断轨迹。若 contract version 改变，下一轮自动重新
 
 from __future__ import annotations
 
-import json
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
 from env_agent_rsi.agent_runtime.model import ModelClient
+from env_agent_rsi.agent_system.context import ConversationContext
 from env_agent_rsi.core.protocol import (
     Action,
     ActionableEnv,
@@ -57,42 +57,41 @@ class AgentRunner:
         model: ModelClient,
         *,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+        skill_texts: tuple[str, ...] | list[str] = (),
         max_steps: int = 30,
+        max_context_messages: int = 80,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps must be positive")
         self.env = env
         self.model = model
         self.system_prompt = system_prompt
+        self.skill_texts = tuple(skill_texts)
         self.max_steps = max_steps
+        self.max_context_messages = max_context_messages
 
     def run(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
     ) -> EpisodeResult:
         reset_response = self.env.reset(seed=seed, options=options)
         descriptor = self.env.describe()
-        messages: list[JsonObject] = [
-            {"role": "system", "content": self.system_prompt},
+        context = ConversationContext(
+            self.system_prompt,
+            self.skill_texts,
+            max_messages=self.max_context_messages,
+        )
+        context.start_task(
             {
-                "role": "user",
-                "content": json.dumps(
-                    {
-                        "task_id": descriptor.task_id,
-                        "task": descriptor.instruction,
-                        "initial_observation": _without_contract(
-                            reset_response.observation
-                        ),
-                    },
-                    ensure_ascii=False,
-                    sort_keys=True,
-                ),
-            },
-        ]
+                "task_id": descriptor.task_id,
+                "task": descriptor.instruction,
+                "initial_observation": _without_contract(reset_response.observation),
+            }
+        )
         trace: list[JsonObject] = []
         stopped_reason = "max_steps"
 
         for step_index in range(1, self.max_steps + 1):
-            output = self.model.generate(messages, descriptor.tools)
+            output = self.model.generate(context.for_model(), descriptor.tools)
             if output.tool_name is None:
                 stopped_reason = "model_returned_no_tool"
                 break
@@ -107,16 +106,9 @@ class AgentRunner:
                     "response": response.to_dict(),
                 }
             )
-            messages.append(output.to_assistant_message())
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": output.call_id,
-                    "name": output.tool_name,
-                    "content": json.dumps(
-                        response.observation, ensure_ascii=False, sort_keys=True
-                    ),
-                }
+            context.append_assistant(output)
+            context.append_tool_result(
+                output.call_id, output.tool_name, response.observation
             )
             descriptor = self.env.describe()
             if response.terminated or response.truncated:
@@ -126,7 +118,7 @@ class AgentRunner:
         return EpisodeResult(
             evaluation=self.env.evaluate(),
             trace=tuple(trace),
-            messages=tuple(messages),
+            messages=context.messages,
             stopped_reason=stopped_reason,
             steps=len(trace),
             final_descriptor=descriptor,

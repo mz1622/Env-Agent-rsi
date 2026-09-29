@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "name": "default-target-agent",
+  "role": "target",
+  "system_prompt": "../prompts/target_system.json",
+  "skills": [
+    "../skills/ambiguous_write_recovery.json"
+  ],
+  "max_steps": 30,
+  "max_context_messages": 80,
+  "provider": {
+    "type": "api",
+    "model": "gpt-4.1-mini",
+    "base_url": "https://api.openai.com/v1",
+    "api_key_env": "OPENAI_API_KEY",
+    "args": {
+      "temperature": 0,
+      "timeout": 60
+    }
+  }
+}

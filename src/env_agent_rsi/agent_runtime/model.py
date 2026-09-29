@@ -7,6 +7,7 @@ OpenAI、Anthropic 或本地模型 SDK 只需实现这一接口。ScriptedModelC
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -38,11 +39,18 @@ class ModelOutput:
     def to_assistant_message(self) -> JsonObject:
         message: JsonObject = {"role": "assistant", "content": self.content}
         if self.tool_name is not None:
-            message["tool_call"] = {
-                "id": self.call_id,
-                "name": self.tool_name,
-                "arguments": deepcopy(dict(self.arguments)),
-            }
+            message["tool_calls"] = [
+                {
+                    "id": self.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": self.tool_name,
+                        "arguments": json.dumps(
+                            dict(self.arguments), ensure_ascii=False, sort_keys=True
+                        ),
+                    },
+                }
+            ]
         return message
 
 

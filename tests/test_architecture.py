@@ -49,10 +49,12 @@ class RegistryTests(unittest.TestCase):
         self.assertIn("issue_goal_state", components["verifiers"])
         self.assertIn("calendar_email_goal_state", components["verifiers"])
         self.assertIn("test_patch_verifier", components["verifiers"])
+        self.assertIn("replay", components["setup_rules"])
         self.assertIn("require_argument", components["contract_rules"])
         self.assertIn("require_argument", components["action_rules"])
         self.assertIn("post_commit_timeout", components["transition_rules"])
         self.assertIn("stale_read_after_write", components["observation_rules"])
+        self.assertIn("step_budget", components["budget_rules"])
 
 
 class ActionRuleTests(unittest.TestCase):

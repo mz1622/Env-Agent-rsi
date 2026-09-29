@@ -9,9 +9,11 @@ from .factory import (
     build_environment,
     load_spec,
     register_action_rule,
+    register_budget_rule,
     register_contract_rule,
     register_environment,
     register_observation_rule,
+    register_setup_rule,
     register_transition_rule,
     register_verifier,
 )
@@ -23,9 +25,11 @@ __all__ = [
     "build_environment",
     "load_spec",
     "register_action_rule",
+    "register_budget_rule",
     "register_contract_rule",
     "register_environment",
     "register_observation_rule",
+    "register_setup_rule",
     "register_transition_rule",
     "register_verifier",
 ]

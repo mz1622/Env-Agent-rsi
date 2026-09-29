@@ -1,7 +1,7 @@
 """场景统一命令行入口。
 
 ``oracle`` 用确定性策略校准环境，``manual`` 提供 JSON Lines 外部桥，``replay``
-通过 ScriptedModelClient 和 AgentRunner 走完整模型工具链；三种模式共享同一个
+通过脚本模型复放，``target`` 从 JSON 装配真实模型 Agent；所有模式共享同一个
 factory、RuleHarness 和 verifier。
 """
 
@@ -13,6 +13,8 @@ import sys
 from pathlib import Path
 
 from env_agent_rsi.agent_runtime import AgentRunner, ScriptedModelClient
+from env_agent_rsi.agent_system.diagnostic import DiagnosticAgent
+from env_agent_rsi.agent_system.target import TargetAgent
 from env_agent_rsi.agents import run_oracle_agent
 from env_agent_rsi.core.protocol import Action
 from env_agent_rsi.harness.factory import build_environment, load_spec
@@ -74,12 +76,22 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Run one catalog scenario")
     parser.add_argument("scenario", type=Path)
     parser.add_argument(
-        "--agent", choices=("oracle", "manual", "replay"), default="oracle"
+        "--agent", choices=("oracle", "manual", "replay", "target"), default="oracle"
     )
     parser.add_argument(
         "--replay",
         type=Path,
         help="JSON action array used by --agent replay through the generic AgentRunner",
+    )
+    parser.add_argument(
+        "--agent-config",
+        type=Path,
+        help="Target Agent JSON config used by --agent target",
+    )
+    parser.add_argument(
+        "--diagnostic-config",
+        type=Path,
+        help="Optional Diagnostic Agent JSON config run after the Target episode",
     )
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
@@ -99,6 +111,17 @@ def main() -> None:
             seed=args.seed
         )
         _print({"scenario": str(args.scenario), **result.to_dict()})
+        return
+    if args.agent == "target":
+        if args.agent_config is None:
+            parser.error("--agent target requires --agent-config")
+        target = TargetAgent.from_config(args.agent_config)
+        result = target.run(env, seed=args.seed)
+        payload = {"scenario": str(args.scenario), **result.to_dict()}
+        if args.diagnostic_config is not None:
+            diagnostic = DiagnosticAgent.from_config(args.diagnostic_config)
+            payload["diagnosis"] = diagnostic.diagnose(result).to_dict()
+        _print(payload)
         return
     reset = env.reset(seed=args.seed)
     if environment_type == "item":

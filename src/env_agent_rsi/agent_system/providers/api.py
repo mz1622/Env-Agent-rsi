@@ -1,0 +1,94 @@
+"""OpenAI-compatible HTTP API 的 ModelClient 实现。
+
+该文件只处理网络协议和返回值规范化，不知道 Target/Diagnostic 角色；使用标准库
+HTTP，避免把某一家 SDK 变成项目的强制依赖。
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from copy import deepcopy
+from typing import Any, Mapping, Sequence
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from env_agent_rsi.agent_runtime.model import Message, ModelOutput
+from env_agent_rsi.core.protocol import JsonObject
+
+
+class APIModelClient:
+    """调用 OpenAI-compatible `/chat/completions` API。"""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        base_url: str = "https://api.openai.com/v1",
+        api_key_env: str = "OPENAI_API_KEY",
+        args: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not model:
+            raise ValueError("API provider requires a model")
+        self.model = model
+        self.base_url = base_url.rstrip("/")
+        self.api_key_env = api_key_env
+        self.args = deepcopy(dict(args or {}))
+
+    def generate(
+        self, messages: Sequence[Message], tools: Sequence[JsonObject]
+    ) -> ModelOutput:
+        api_key = os.environ.get(self.api_key_env)
+        if not api_key:
+            raise RuntimeError(f"missing API key in environment variable {self.api_key_env}")
+        timeout = float(self.args.get("timeout", 60.0))
+        extra = {key: value for key, value in self.args.items() if key != "timeout"}
+        payload: JsonObject = {
+            "model": self.model,
+            "messages": deepcopy(list(messages)),
+            **extra,
+        }
+        if tools:
+            payload["tools"] = deepcopy(list(tools))
+        request = Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=timeout) as response:
+                result = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"model API returned HTTP {exc.code}: {detail}") from exc
+        except URLError as exc:
+            raise RuntimeError(f"model API request failed: {exc.reason}") from exc
+        return _parse_chat_completion(result)
+
+
+def _parse_chat_completion(result: Mapping[str, Any]) -> ModelOutput:
+    try:
+        message = result["choices"][0]["message"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("API response does not contain choices[0].message") from exc
+    content = str(message.get("content") or "")
+    calls = message.get("tool_calls") or []
+    if not calls:
+        return ModelOutput(tool_name=None, content=content)
+    call = calls[0]
+    function = call.get("function", {})
+    arguments = function.get("arguments", {})
+    if isinstance(arguments, str):
+        arguments = json.loads(arguments or "{}")
+    if not isinstance(arguments, Mapping):
+        raise ValueError("tool call arguments must decode to an object")
+    return ModelOutput(
+        tool_name=str(function["name"]),
+        arguments=dict(arguments),
+        content=content,
+        call_id=str(call.get("id", "tool-call")),
+    )
