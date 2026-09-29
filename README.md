@@ -130,6 +130,7 @@ OpenAI、Anthropic、本地模型或 replay 只需把各自 SDK 的 tool-call �
 ## Current research deliverables
 
 - `research/env_evolution_report.tex`：基于 EnvHarness 的环境演化路线、相关工作、搜索策略与最小落地方案。
+- `research/env_evolution_method.tex`：完整定义失败条件驱动、保持 verifier 不变的最小辅助搜索，以及环境 DAG、Learner 和迁移评估方法。
 - `research/minimal_env_plan.md`：可直接进入实现的里程碑、接口、首批环境变体与验收条件。
 - `outputs/env-evolution-research/benchmark_landscape.xlsx`：Agent harness、Agent RSI、通用 Agent 与环境演化工作的 benchmark 对照、例子、优先级、评分和来源。
 - `benchmark.md`：从上述对照中筛选公开且适合 Env–Agent co-evolve 的 benchmark，给出下载入口、bridge 适配方式和分阶段接入顺序。

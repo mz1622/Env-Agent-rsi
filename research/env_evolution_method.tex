@@ -1,0 +1,1030 @@
+\documentclass[11pt,a4paper,fontset=fandol]{ctexart}
+
+\usepackage[margin=2.15cm]{geometry}
+\usepackage{amsmath,amssymb,mathtools}
+\usepackage{booktabs,longtable,tabularx,array,multirow}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{xurl}
+\usepackage{microtype}
+\usepackage{listings}
+\usepackage{fancyhdr}
+
+\definecolor{deepblue}{HTML}{1F4E79}
+\definecolor{softblue}{HTML}{EAF2F8}
+\definecolor{softgray}{HTML}{F3F4F6}
+\definecolor{darkgray}{HTML}{374151}
+\definecolor{softred}{HTML}{FDECEC}
+\definecolor{softgreen}{HTML}{EAF6EC}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=deepblue,
+  urlcolor=blue!65!black,
+  citecolor=deepblue,
+  pdftitle={Env--Agent Co-evolve 的环境演化方法},
+  pdfauthor={Env-Agent-RSI 项目}
+}
+
+\setlist{nosep,leftmargin=2em}
+\setlength{\parindent}{2em}
+\setlength{\parskip}{0.35em}
+\renewcommand{\arraystretch}{1.22}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}p{#1}}
+\newcolumntype{L}[1]{>{\raggedright\arraybackslash}p{#1}}
+\newcommand{\code}[1]{\texttt{\detokenize{#1}}}
+\newcommand{\Etarget}{E_0}
+\newcommand{\Echild}{E_{\delta}}
+\newcommand{\Agent}{A_{\theta}}
+\newcommand{\Agentnew}{A_{\theta'}}
+\newcommand{\fA}{f_A}
+\newcommand{\fT}{f_T}
+\newcommand{\fO}{f_O}
+
+\lstdefinestyle{method}{
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{softgray},
+  frame=single,
+  rulecolor=\color{gray!40},
+  framerule=0.4pt,
+  breaklines=true,
+  columns=fullflexible,
+  keepspaces=true,
+  showstringspaces=false,
+  aboveskip=0.7em,
+  belowskip=0.7em
+}
+\lstset{style=method}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{Env--Agent Co-evolve}
+\fancyhead[R]{环境演化方法}
+\fancyfoot[C]{\thepage}
+\setlength{\headheight}{14pt}
+
+\title{Env--Agent Co-evolve 的环境演化方法\\
+\large 失败条件驱动、保持验证器不变的最小辅助搜索}
+\author{Env-Agent-RSI 项目方法设计}
+\date{2026年9月28日}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+本文提出一套用于 Env--Agent co-evolve 的具体方法。目标不是开放式地生成越来越难的新环境，也不是把环境搜索重新变成 Agent 自我改写，而是从一个固定的目标环境出发，根据 Target Agent 的真实失败，搜索能够修复该失败的\textbf{最小环境辅助}。辅助环境必须保持原任务语义和原生验证器不变，并通过确定性重置、Oracle 可解、状态隔离、特权信息不泄漏等门禁。Agent 在辅助环境中获得成功轨迹后，由显式 Learner 将失败轨迹与成功轨迹压缩为 skill、memory 或训练数据；随后撤掉辅助并回到父环境测试。只有当更新后的 Agent 在原目标环境上取得提升时，环境节点才具有学习价值。
+
+本文依次定义目标函数、跨 benchmark 的统一可变面、六类环境变换、问题树与环境谱系 DAG 的分工、有界 best-first 搜索、skill 生成与验证方法、exactly-once 案例、跨 AppWorld、$\tau^3$-bench、SWE-bench、WebArena 和 SpreadsheetBench 的适配方式，以及可以直接落入当前代码库的模块、数据结构、实验协议和验收条件。
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\section{结论先行}
+
+本项目应把环境演化定义为：
+
+\begin{quote}
+\textbf{失败条件驱动、保持 verifier 不变的最小辅助搜索。}
+\end{quote}
+
+它包含三个不可混淆的对象：
+
+\begin{enumerate}
+  \item \textbf{目标环境} $\Etarget$：最终必须解决的原始环境和任务，成功条件固定。
+  \item \textbf{辅助环境} $\Echild$：在环境边界上加入一个或少量改动，用来缩短 horizon、显式化约束、减少不必要的部分可观察性，或提供安全的纠错反馈。
+  \item \textbf{Target Agent} $\Agent$：在同一轮环境候选比较中保持冻结；只有进入显式学习阶段后，才允许通过 skill、memory、SFT 或 RL 得到 $\Agentnew$。
+\end{enumerate}
+
+环境搜索的直接目标不是让 $\Agent$ 在 $\Echild$ 上成功，而是让 $\Agent$ 从 $\Echild$ 的经验中学习后，能够回到 $\Etarget$ 成功。辅助环境的成功只说明该节点能够产生训练信号，并不自动等价于 Agent 进步。
+
+第一版建议采用以下策略：
+
+\begin{itemize}
+  \item 使用 benchmark adapter 暴露统一的 \code{MutationSurface}；
+  \item 使用声明式、类型化的 \code{EnvironmentMutationSpec}，不直接生成任意环境代码；
+  \item 从失败轨迹生成 4--8 个单一改动候选；
+  \item 先做硬门禁，再做低成本筛选和 successive halving；
+  \item 使用问题树诊断失败，使用 DAG 保存环境候选谱系；
+  \item 从“父环境失败 + 子环境成功”的成对轨迹生成 skill；
+  \item 每次学习后立即回测父环境；父环境成功后剪掉更容易的后代；
+  \item 以原目标环境上的 transfer gain 作为最终指标。
+\end{itemize}
+
+\section{问题定义与优化目标}
+
+\subsection{环境与 Agent}
+
+将一个可交互环境写成
+\begin{equation}
+E=(\mathcal{S},\mathcal{A},\mathcal{O},T,G,s_0,B),
+\end{equation}
+其中 $\mathcal{S}$ 是真实状态空间，$\mathcal{A}$ 是动作空间，$\mathcal{O}$ 是 Agent 可见观察，$T$ 是转移过程，$G$ 是原生目标验证器，$s_0$ 是初始状态，$B$ 是步数、时间、写操作或 token 等预算。
+
+Target Agent $\Agent$ 根据可见历史产生动作：
+\begin{equation}
+a_t \sim \pi_{\theta}(a_t\mid o_{0:t},a_{0:t-1}).
+\end{equation}
+
+环境改动 $\delta$ 作用在标准接口边界，产生辅助环境
+\begin{equation}
+\Echild=\delta(\Etarget),
+\end{equation}
+但必须满足
+\begin{equation}
+G_{\Echild}=G_{\Etarget},
+\end{equation}
+即原生 verifier 的实现、语义和哈希保持不变。
+
+\subsection{双层优化}
+
+环境候选先产生轨迹数据
+\begin{equation}
+D_{\delta}=\operatorname{Rollout}(\Agent,\Echild),
+\end{equation}
+Learner 再产生受约束的 Agent 更新
+\begin{equation}
+\theta'=U(\theta,D_{\delta},D_{0}^{\mathrm{fail}}).
+\end{equation}
+
+外层环境搜索优化的是更新后 Agent 在原始目标环境上的表现：
+\begin{equation}
+\delta^*=arg\max_{\delta\in\mathcal{M}}
+J\!\left(A_{U(\theta,D_{\delta})},\Etarget^{\mathrm{holdout}}\right)
+-\lambda d(\Echild,\Etarget)
+-\mu C(\Echild),
+\label{eq:outer}
+\end{equation}
+其中：
+
+\begin{itemize}
+  \item $\mathcal{M}$ 是允许的环境变换语言；
+  \item $d$ 是辅助距离，衡量改动数量、信息增量、动作能力增量和预算差异；
+  \item $C$ 是执行、重置、快照和评估成本；
+  \item holdout task 不参与环境候选选择或 skill 生成。
+\end{itemize}
+
+\subsection{两个必须分开的提升}
+
+定义环境直接收益
+\begin{equation}
+\Delta_{\mathrm{env}}
+=J(\Agent,\Echild)-J(\Agent,\Etarget),
+\end{equation}
+以及学习迁移收益
+\begin{equation}
+\Delta_{\mathrm{transfer}}
+=J(\Agentnew,\Etarget)-J(\Agent,\Etarget).
+\end{equation}
+
+$\Delta_{\mathrm{env}}>0$ 只说明环境界面更适合该 Agent。如果最终保留这一改动，它属于 deployment-time environment improvement。只有 $\Delta_{\mathrm{transfer}}>0$ 才能支持“Target Agent 通过环境课程获得进步”的结论。
+
+\section{跨环境统一的可变面}
+
+\subsection{Adapter 不统一业务语义，只统一边界}
+
+订单、网页、代码仓库和电子表格不应该被强迫共享同一个业务 action。统一层只要求每个 benchmark 实现当前仓库的 \code{ActionableEnv}：
+
+\begin{lstlisting}[language=Python]
+descriptor = env.describe()       # task + tools + contract version
+initial = env.reset(seed=seed)    # deterministic initial state
+response = env.step(action)      # Action -> EnvResponse
+result = env.evaluate()          # native verifier on true state
+snapshot = env.save_state()      # environment + rule state
+env.load_state(snapshot)
+\end{lstlisting}
+
+每个 adapter 额外导出一个 \code{MutationSurface}。它不是把真实状态全部公开给 Agent，而是向环境搜索器声明哪些边界允许改变、有哪些故障注入点、哪些能力可以被渐进式暴露。
+
+\subsection{MutationSurface}
+
+建议的数据结构如下：
+
+\begin{lstlisting}
+MutationSurface:
+  setup_points:
+    - legal_replay
+    - task_parameter
+    - initial_visibility
+  tools:
+    - name
+      schema
+      effect: read | write | destructive_write
+      idempotent: true | false | unknown
+      reversible: true | false
+      confirmable: true | false
+      entity_types: [...]
+      fault_points: [pre_commit, post_commit, response]
+  observations:
+    - channel: result | error | state_summary | artifact
+      freshness_available: true | false
+      provenance_available: true | false
+  budgets:
+    - steps
+    - writes
+    - wall_time
+    - tokens
+  snapshot:
+    mode: native | rebuild | replay
+  evaluator:
+    type: state | tests | predicate | trace
+    immutable_hash: ...
+\end{lstlisting}
+
+\subsection{工具语义标签}
+
+工具 schema 只能告诉模型参数类型，不能告诉搜索器该动作是否危险。每个 adapter 应为工具增加 harness-only 语义标签：
+
+\begin{lstlisting}
+{
+  "name": "cancel_order",
+  "effect": "destructive_write",
+  "idempotent": false,
+  "reversible": false,
+  "confirmable": true,
+  "entity_types": ["order"],
+  "fault_points": ["pre_commit", "post_commit", "response"]
+}
+\end{lstlisting}
+
+这些标签只供 proposer、validator 和诊断器使用，不自动进入 Agent observation。Contract mutation 可以选择性地把其中一部分转化为 Agent 可见说明。
+
+\subsection{不同 benchmark 的映射}
+
+\begin{longtable}{L{2.8cm}L{3.4cm}L{3.5cm}L{5.2cm}}
+\toprule
+环境 & 真实状态 & 原生 action & 可改变的边界 \\
+\midrule
+\endfirsthead
+\toprule
+环境 & 真实状态 & 原生 action & 可改变的边界 \\
+\midrule
+\endhead
+AppWorld / $\tau^3$-bench & 数据库、订单、账户、对话状态 & API tool call 与消息 & 工具 schema、政策前置条件、确认、提交结果、错误结构、陈旧读取、写预算 \\
+SWE-bench & 文件、Git diff、依赖和测试状态 & shell、文件读取/编辑、测试 & 命令契约、允许路径、timeout、stdout 截断、测试预算、保存与恢复 \\
+WebArena / WorkArena & 页面、session、后端数据库、网络 trace & click、type、scroll、navigate & action grammar、元素标识、DOM/AX tree、截图、请求故障、提交确认 \\
+SpreadsheetBench & 工作簿、公式、缓存值、输出文件 & 读写 range、公式、重算、保存 & 可写范围、重算时机、保存故障、陈旧缓存、可见行列、操作预算 \\
+ALFWorld & 房间、物体、容器和目标谓词 & 文本动作 & 起始位置、合法动作格式、可见物体、反馈粒度、步数预算 \\
+Terminal-Bench & 容器文件系统、进程和服务 & shell command & allowlist、资源限制、timeout、输出丢失、磁盘和时间预算 \\
+\bottomrule
+\end{longtable}
+
+\section{六类环境变换}
+
+\subsection{Setup：通过合法路径缩短 horizon}
+
+Setup 在 reset 后重放合法动作前缀
+\begin{equation}
+s'_0=T(\cdots T(T(s_0,a_1),a_2)\cdots,a_k),
+\end{equation}
+使 Agent 从接近失败点的可达状态开始。它适合把“搜索整个仓库后修改一行”缩短为“相关文件已经定位”，或把长订单流程缩短到关键写操作之前。
+
+Setup 必须满足：动作前缀可以审计和回放；新状态是原环境可达状态；不能执行任务的核心答案；不能把 hidden state 直接复制到 observation。
+
+\subsection{Contract：显式化原本隐含的规则}
+
+Contract 修改 Agent 可见工具名称、描述、参数 schema、必填字段和错误契约，同时执行前校验必须与 schema 同源。例如将
+
+\begin{lstlisting}
+cancel_order(order_id)
+\end{lstlisting}
+
+改为辅助契约
+
+\begin{lstlisting}
+cancel_order(
+  order_id,
+  confirmed_by_user,
+  idempotency_key
+)
+\end{lstlisting}
+
+Contract 的教学作用是让 Agent 学会动作前置条件、稳定资源 ID、幂等键复用和危险操作确认。撤去辅助时，可以逐级从“必填参数”退化为“工具描述提示”，再回到目标契约。
+
+\subsection{$\fA$：执行前保护与纠错}
+
+$\fA$ 在真实 action 执行前运行：
+\begin{equation}
+\fA(a_t,s_t)\rightarrow
+\begin{cases}
+\text{allow}(a'_t),\\
+\text{block}(e_t),\\
+\text{rewrite}(a'_t).
+\end{cases}
+\end{equation}
+
+它可以阻止无确认退款、缺少幂等键的写操作、越界文件修改或歧义网页动作，并返回结构化纠错信息。首版应优先使用 block + explanation，谨慎使用自动 rewrite；否则 Agent 可能依赖环境替它修正错误。
+
+\subsection{$\fT$：真实转移后的可学习反馈}
+
+$\fT$ 位于基础环境完成真实转移之后。对辅助课程而言，它的主要用途不是制造更难的故障，而是把目标环境中模糊的转移状态先变得可学习。例如目标环境只返回 timeout，辅助环境先返回：
+
+\begin{lstlisting}
+{
+  "error": "COMMIT_STATUS_UNKNOWN",
+  "request_id": "req-17",
+  "retry_safe": false
+}
+\end{lstlisting}
+
+之后逐步去掉 \code{retry_safe}、\code{request_id} 和稳定 error code，恢复原始 timeout。若研究目标本身是故障恢复，也可以在廉价微环境中复现目标故障，但这种故障复制属于诊断环境，不应被误称为“辅助变得更难”。
+
+\subsection{$\fO$：改变可见信息的组织方式}
+
+$\fO$ 只修改 Agent-visible observation，不修改真实状态。辅助信号可以包括：结果来源、更新时间、freshness、request ID、状态变化摘要、相关字段排序、更清晰的错误信息或有限的 provenance。
+
+必须防止两种泄漏：一是把 verifier 的期望值直接暴露给 Agent；二是让 observation 包含原环境中永远无法取得的信息。如果辅助信息在目标环境完全不存在，则最终迁移只能依赖 Agent 抽象出不需要该信息的策略，否则辅助无法撤去。
+
+\subsection{Budget：先放宽，再收紧}
+
+Budget mutation 可以增加查询次数、测试次数、运行时间、上下文或一次额外确认读取。它适合构造渐退课程，但不能成为唯一方法；否则成功可能只来自暴力搜索。Budget 距离应计入环境辅助成本。
+
+\subsection{Macro / Link：后期使用}
+
+Macro tool 把多个原子 action 组合为一个安全动作，例如 \code{safe_append} 或 \code{edit_and_test}。它可以产生最初成功轨迹，但迁移风险最大，因为目标环境可能没有该能力。Link/Chain 组合多个环境时还需要复合 verifier 和共享状态语义。二者都应晚于 Setup、Contract、$\fA$、$\fT$、$\fO$ 和 Budget。
+
+\section{问题树与环境谱系 DAG}
+
+\subsection{问题树负责诊断}
+
+问题树描述失败如何分解，而不是枚举所有可能环境：
+
+\begin{verbatim}
+任务失败
+├── Action 选择错误
+│   ├── 工具选择错误
+│   └── 参数或实体绑定错误
+├── 状态判断错误
+│   ├── 未确认写操作结果
+│   └── 把陈旧读取当成真实状态
+├── 恢复策略错误
+│   ├── timeout 后无条件重试
+│   └── 重试时更换幂等键
+└── 终止判断错误
+    ├── 过早 finish
+    └── 未检查 collateral damage
+\end{verbatim}
+
+只有被真实轨迹证据支持的节点才继续展开。父问题已经通过某个通用策略解决时，其子问题不需要分别生成 skill。
+
+\subsection{环境 DAG 负责记录候选}
+
+环境节点是规范化 mutation spec，而不是自然语言问题：
+
+\begin{verbatim}
+E0  原目标环境
+├── E1  错误中增加 commit_status
+├── E2  Contract 标记写操作非幂等
+└── E3  提供 request_id 查询
+    └── E4  Contract + request_id 查询
+\end{verbatim}
+
+E4 同时来自 E2 和 E3，因此数据结构应是 DAG。节点使用规范哈希去重，边记录单个有类型的 mutation。问题树可以稳定存在；环境 DAG 会随着 Agent 更新而被剪枝。
+
+\subsection{为什么父节点成功后子节点可以删除}
+
+子环境的意义不是永久保留，而是提供 stepping stone。更新后的 Agent 如果已经在父环境成功，说明它不再需要更强辅助：
+
+\begin{equation}
+J(\Agentnew,E_{\mathrm{parent}})\ge \tau
+\quad\Longrightarrow\quad
+\operatorname{prune}(\operatorname{descendants}(E_{\mathrm{parent}})).
+\end{equation}
+
+删除的是搜索活跃状态，不是实验记录。轨迹、mutation、skill 来源和验证结果仍保存在 lineage archive 中，用于审计和复现实验。
+
+\section{失败诊断}
+
+\subsection{Failure Signature}
+
+诊断器不能只接收“任务失败”。它应结合 Agent-visible trajectory、harness-only fault event、真实状态 diff 和 verifier 指标生成结构化 Failure Signature：
+
+\begin{lstlisting}
+{
+  "phase": "after_write",
+  "operation": "append_item",
+  "effect": "destructive_write",
+  "observed_error": "timeout",
+  "true_transition": "committed",
+  "agent_response": "unconditional_retry",
+  "failure": "duplicate_side_effect",
+  "missing_capability": "confirm_before_retry",
+  "evidence": ["step:3", "step:4", "verifier:duplicate_count"]
+}
+\end{lstlisting}
+
+\subsection{证据优先级}
+
+诊断应按以下顺序使用证据：
+
+\begin{enumerate}
+  \item verifier 的失败指标和最终状态差异；
+  \item 命名 fault event 与真实转移时点；
+  \item Agent 调用的工具、参数和 observation；
+  \item 可复放的反事实检查，例如阻止第二次写入后结果是否变化；
+  \item 最后才使用 LLM 对轨迹做语义归纳。
+\end{enumerate}
+
+LLM 可以把低层事件归纳为“未确认提交结果”，但不能覆盖与状态和 verifier 冲突的事实。
+
+\subsection{Agent 不足还是环境不可解}
+
+每个失败都必须先经过 feasibility audit：目标环境是否存在一条 Agent 可执行、信息充分的成功路径？如果写操作是否提交完全不可查询、没有幂等键、没有补偿动作，且 verifier 又禁止重复副作用，那么原环境可能在该故障下不可解。
+
+此时应明确区分：
+
+\begin{itemize}
+  \item 保留环境 patch：得到部署环境改进；
+  \item 要求撤去 patch：报告信息不足或 action 不完备，停止 skill 搜索；
+  \item 不能把无法撤去的新增工具包装成 Agent 学习成果。
+\end{itemize}
+
+\section{候选生成与搜索}
+
+\subsection{类型化 MutationSpec}
+
+首版不生成任意 Python wrapper，而生成有界声明式规范：
+
+\begin{lstlisting}
+{
+  "mutation_id": "m-postcommit-status-v1",
+  "parent_hash": "...",
+  "phase": "transition",
+  "operator": "clarify_post_commit_error",
+  "scope": {"tools": ["append_item"]},
+  "trigger": {"event": "post_commit_timeout"},
+  "transform": {
+    "stable_error_code": "COMMIT_STATUS_UNKNOWN",
+    "include_request_id": true
+  },
+  "expected_failure": "duplicate_side_effect",
+  "assistance_cost": 2,
+  "reversible": true
+}
+\end{lstlisting}
+
+每个 operator 都需要 schema、前置条件、互斥条件、可逆变换和距离成本。只有当声明式算子无法覆盖关键 benchmark 后，才允许在沙箱中引入受审计代码 mutation。
+
+\subsection{候选生成规则}
+
+对一个 Failure Signature，proposer 最多生成 4--8 个候选，优先级如下：
+
+\begin{enumerate}
+  \item 不增加新能力，只重写 Contract 或 observation；
+  \item 增加纠错 guard，但不自动执行正确 action；
+  \item 缩短无关 horizon 的 Setup；
+  \item 放宽有限预算；
+  \item 最后才增加 macro 或新查询能力。
+\end{enumerate}
+
+单个初始候选只允许一个 mutation；只有单一改动均不足时，才组合两个正交改动。这样可以保留因果可解释性。
+
+\subsection{验证门禁}
+
+候选必须依次通过：
+
+\begin{enumerate}
+  \item schema 与 mutation allowlist；
+  \item verifier 实现和哈希不变；
+  \item 固定 seed 重置确定性；
+  \item snapshot/restore 或 rebuild/replay 一致；
+  \item Oracle 在所有验证 seed 成功；
+  \item 指定 fault event 确实触发；
+  \item 未触发路径与原环境行为一致；
+  \item Agent observation 不含 \code{info}、hidden tests、gold answer 或 expected actions；
+  \item episode 间无状态泄漏；
+  \item runtime 和资源消耗在预算内。
+\end{enumerate}
+
+未通过硬门禁的候选记入 rejected archive，但不进入性能排序。
+
+\subsection{有界 best-first 与 successive halving}
+
+首版不需要 MCTS。原因是 action library 尚未稳定、一个完整 rollout 成本高、学习后的奖励具有延迟性。建议：
+
+\begin{enumerate}
+  \item 用 1--3 个 task/seed 做 smoke；
+  \item 保留通过门禁且产生目标 fault coverage 的候选；
+  \item 用小训练子集估计环境直接收益和成功轨迹质量；
+  \item 只让前 $k$ 个候选进入 skill induction；
+  \item 用固定 parent/holdout 评估 transfer；
+  \item 根据 transfer、辅助距离和成本选择下一个扩展节点。
+\end{enumerate}
+
+当 mutation action space、价值估计和低成本 rollout 都稳定后，可以把同一接口替换为 MCTS；当前不应让 MCTS 在开放自然语言环境代码空间中搜索。
+
+\subsection{候选评分}
+
+硬门禁后保留以下多目标向量：
+
+\begin{align}
+q(\Echild)=(&\Delta_{\mathrm{transfer}},
+\Delta_{\mathrm{env}},
+-d(\Echild,\Etarget),
+\mathrm{trigger\_coverage},\\
+&\mathrm{behavioral\_novelty},
+-\mathrm{runtime},
+-\mathrm{reset\_variance},
+-\mathrm{regression}).
+\end{align}
+
+使用 Pareto archive 保留非支配候选，避免一个人为加权分数过早丢掉低成本或高迁移候选。需要选择单个扩展父节点时，再对归一化指标加权。
+
+\section{Target Agent 如何从环境中学习}
+
+\subsection{显式 Learner 边界}
+
+环境演化不能偷偷修改 system prompt 或 Agent 代码。所有 Agent 更新必须经过统一接口：
+
+\begin{lstlisting}[language=Python]
+update = learner.learn(
+    parent_failures=failed_trajectories,
+    child_successes=successful_trajectories,
+    mutation=mutation_spec,
+    failure_signature=failure_signature,
+)
+updated_agent = agent.apply(update)
+\end{lstlisting}
+
+这样可以独立比较不同 Learner：skill induction、检索式 memory、SFT 数据生成、偏好优化或 RL。
+
+\subsection{第一版采用成对轨迹 skill induction}
+
+最便宜、最可解释的学习方式是比较父环境失败轨迹和子环境成功轨迹，提取两者之间真正改变结果的策略。skill 建议使用以下结构：
+
+\begin{lstlisting}
+skill_id: ambiguous-write-recovery
+trigger:
+  - destructive write returned timeout
+  - commit status is uncertain
+policy:
+  - do not blindly repeat the write
+  - reuse the same stable request/idempotency key
+  - query observable state before retrying
+  - retry only after confirming absence
+checks:
+  - target object exists exactly once
+  - unrelated objects are unchanged
+forbidden:
+  - unconditional retry
+  - generating a new idempotency key on retry
+scope:
+  - stateful APIs with confirmable writes
+provenance:
+  - parent trajectory ids
+  - child trajectory ids
+  - mutation id
+\end{lstlisting}
+
+skill 中不能包含 task ID、目标答案、gold patch、隐藏数据库值或只在单个实例成立的实体名称。
+
+\subsection{Skill 验证}
+
+每个 skill 必须通过：
+
+\begin{enumerate}
+  \item \textbf{父环境验证：}更新后的 Agent 是否解决生成该 skill 的父环境；
+  \item \textbf{同族 heldout：}相同失败机制但不同实体、任务和 seed 是否提升；
+  \item \textbf{兄弟环境：}同一父节点的其他 mutation 是否受益；
+  \item \textbf{负例：}普通读操作、明确 pre-commit failure 等场景是否被错误触发；
+  \item \textbf{回归：}原本成功任务是否因过度谨慎而失败或超预算。
+\end{enumerate}
+
+只有同时满足最小提升和最大回归阈值，skill 才进入可检索库。否则保留轨迹证据但拒绝 Agent 更新。
+
+\subsection{辅助淡化}
+
+对一个成功子环境，逐级降低辅助：
+
+\begin{equation}
+E^{(k)}\rightarrow E^{(k-1)}\rightarrow\cdots\rightarrow E^{(1)}\rightarrow\Etarget.
+\end{equation}
+
+每一级只移除一个可解释的帮助，例如先去掉 macro，再去掉 explicit status，再缩短错误说明，最后恢复原预算。若某一级失败，优先判断 skill 是否依赖被移除的能力，而不是立即生成更多子 skill。
+
+\section{端到端算法}
+
+\begin{lstlisting}[language=Python]
+def evolve_environment(target_env, target_agent, learner, budget):
+    active = target_env
+    archive = LineageArchive(root=target_env)
+
+    while budget.remaining():
+        parent_runs = rollout(target_agent, active)
+        if passes(parent_runs):
+            if active.is_root:
+                return target_agent, archive
+            active = active.parent
+            continue
+
+        failure = diagnose(parent_runs, active.evaluate())
+        if not feasibility_audit(active, failure):
+            archive.record_environment_limitation(active, failure)
+            break
+
+        candidates = proposer.propose(
+            surface=active.mutation_surface(),
+            failure=failure,
+            max_candidates=8,
+        )
+
+        valid = []
+        for mutation in candidates:
+            child = apply_mutation(active, mutation)
+            if validator.accepts(child):
+                valid.append(screen(target_agent, child))
+
+        selected = successive_halving(valid)
+        for child, child_runs in selected:
+            update = learner.learn(
+                parent_failures=parent_runs,
+                child_successes=child_runs,
+                mutation=child.mutation,
+                failure_signature=failure,
+            )
+            candidate_agent = target_agent.apply(update)
+            transfer = evaluate(candidate_agent, active)
+            archive.record(child, update, transfer)
+
+            if transfer.accepted:
+                target_agent = candidate_agent
+                archive.prune_descendants(active)
+                if active.is_root:
+                    return target_agent, archive
+                active = active.parent
+                break
+        else:
+            active = select_best_child(selected, archive)
+
+    return target_agent, archive
+\end{lstlisting}
+
+该算法以“回到父环境”为默认方向。只有在当前 Agent 无法从已有成功轨迹中迁移时才继续向更容易的子环境扩展。
+
+\section{Exactly-once 完整案例}
+
+\subsection{目标环境}
+
+目标是把 \code{target-item} 恰好写入一次：
+
+\begin{verbatim}
+append_item 已经提交
+        ↓
+Agent 收到 timeout
+        ↓
+第一次 list_items 返回 stale snapshot
+        ↓
+Agent 重复 append_item
+        ↓
+verifier 检测到 duplicate side effect
+\end{verbatim}
+
+真实失败不是“工具返回错误”这么粗，而是：提交后故障、观察陈旧、Agent 无条件重试三者组合。
+
+\subsection{Failure Signature}
+
+\begin{lstlisting}
+phase: after_write
+effect: destructive_write
+true_transition: committed
+observation: timeout_then_stale_read
+agent_response: unconditional_retry
+verifier_failure: duplicate_target_value
+missing_capability: confirm_before_retry
+\end{lstlisting}
+
+\subsection{辅助阶梯}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{C{1.2cm}Y Y C{1.8cm}}
+\toprule
+层级 & 环境辅助 & 希望学到的行为 & 距离 \\
+\midrule
+$E_3$ & 提供 \code{safe_append} 宏工具 & 先体验正确的安全写入流程 & 高 \\
+$E_2$ & 提供 request ID 和按 request 查询 & 用稳定标识确认提交状态 & 中 \\
+$E_1$ & 只提供 \code{COMMIT_STATUS_UNKNOWN} 错误码 & 识别不可盲目重试的错误类别 & 低 \\
+$E_0$ & 原始 timeout + stale read & 自主执行 confirm-before-retry & 0 \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Agent 在 $E_3$ 成功后生成的 skill 必须在 $E_2$、$E_1$ 和 $E_0$ 逐级验证。如果它只能调用 \code{safe_append}，说明学到的是对宏工具的依赖；如果它能在 $E_0$ 中复用相同幂等键、执行多次确认读取并避免重复写，才说明策略已经迁移。
+
+\subsection{可能的不可解情况}
+
+如果目标环境既没有幂等键，也没有任何按值、按请求或按实体查询的方式，post-commit timeout 后就不存在可靠确认路径。此时应保留一个永久环境 patch，或将任务标记为在该故障模型下不可解。继续生成“更聪明的重试 skill”只会掩盖环境缺陷。
+
+\section{外部 benchmark 的具体方法}
+
+\subsection{AppWorld}
+
+AppWorld 提供多应用数据库、丰富 API 和状态单测式 evaluator\cite{appworld}。首版选择 train/dev 中有写副作用和跨应用依赖的任务。adapter 将 API 转成工具 schema，保留 AppWorld 数据库 evaluator。主要 mutation 是：显式资源 ID、破坏性操作确认、跨 app 工具可见性、post-commit timeout、陈旧读取和写预算。
+
+它适合回答：环境辅助能否教会 Agent 在状态化多应用世界中处理副作用、跨应用一致性和 collateral damage。
+
+\subsection{$\tau^3$-bench}
+
+$\tau^3$-bench 的 policy、tools、tasks、数据库和用户模拟器适合研究订单、退款、改签和政策约束\cite{tau3repo}。首版使用文本 half-duplex、固定 simulator 配置和 base split，从 mock 到 retail。必须保存 user trajectory，并设置 scripted/replay user 对照，以分离环境 mutation 和 user simulator 方差。
+
+它最适合承接当前订单场景中的幂等写、确认、政策前置条件和提交后不确定性。
+
+\subsection{ALFWorld 与 WebShop}
+
+ALFWorld 用确定性目标谓词评估文本具身任务\cite{alfworld}，适合低成本验证 Setup 和 observation contract。WebShop 是自托管模拟电商网站，提供商品属性匹配奖励\cite{webshop}，适合测试导航、分页、属性可见性和购买前确认。
+
+二者主要承担跨接口泛化，而不是状态化 API 副作用主结论。
+
+\subsection{SWE-bench Verified}
+
+SWE-bench Verified 使用真实仓库问题和 FAIL\_TO\_PASS / PASS\_TO\_PASS 测试\cite{swebench}。adapter 需要把 shell、文件读取、编辑、测试和 finish 包成工具；reset 根据 base commit 重建容器；snapshot 可以由镜像 digest、task record、Git diff 和动作日志重建。
+
+适合的 mutation 是命令契约、允许路径、执行后 timeout、stdout 截断和测试预算。测试、gold patch 和依赖版本不能改变。
+
+\subsection{WebArena-Verified}
+
+WebArena-Verified 提供版本化任务和基于 agent response 与网络 trace 的确定性离线 evaluator\cite{webarenaverified}。建议通过 BrowserGym 实现通用浏览器 adapter，再复用于 WorkArena。环境变化集中在 action grammar、DOM/AX tree、截图、network response、登录状态和提交确认。
+
+\subsection{SpreadsheetBench 2}
+
+SpreadsheetBench 2 包含调试、财务模型、模板和可视化任务\cite{spreadsheetbench2}。首版只使用前三类确定性 evaluator，排除依赖 VLM checklist 的可视化类。每个 episode 使用输入工作簿的 copy-on-write 副本，环境 mutation 可以改变工具契约、可写范围、重算时机、保存反馈和读取缓存，但不能改变 golden workbook。
+
+\section{评估协议}
+
+\subsection{数据划分}
+
+每个任务族至少划分：
+
+\begin{itemize}
+  \item \textbf{diagnosis set}：发现失败和生成候选；
+  \item \textbf{induction set}：产生成功轨迹和 skill；
+  \item \textbf{validation set}：选择 mutation 与 skill；
+  \item \textbf{heldout target set}：只用于最终 transfer 评估。
+\end{itemize}
+
+同一 task ID 不应跨 induction 和 heldout。实体、seed 或表面文本变化不足以替代 task-level 隔离。
+
+\subsection{实验组}
+
+至少比较：
+
+\begin{enumerate}
+  \item 原环境 + 原 Agent；
+  \item 随机 mutation + 同预算 Learner；
+  \item 诊断驱动 mutation + 无 Agent 更新；
+  \item 诊断驱动 mutation + skill induction；
+  \item Oracle 选择的最佳 mutation，上界参考；
+  \item 可选：直接从父失败轨迹生成 skill，不使用辅助环境。
+\end{enumerate}
+
+第四组与第六组的差异回答：辅助环境产生的成功经验是否比单纯反思失败更有价值。
+
+\subsection{指标}
+
+\begin{longtable}{L{3.7cm}L{10.7cm}}
+\toprule
+指标 & 含义 \\
+\midrule
+\endfirsthead
+\toprule
+指标 & 含义 \\
+\midrule
+\endhead
+Target success & 更新后的 Agent 在原目标环境 holdout 上的成功率 \\
+Transfer gain & 相对原 Agent 的 target success 增量 \\
+Environment gain & 冻结 Agent 在辅助环境相对原环境的增量 \\
+Assistance distance & mutation 数量、信息增量、能力增量和预算差异 \\
+Oracle success & 辅助环境是否仍然可解 \\
+Fault trigger coverage & 目标故障或纠错点是否实际触发 \\
+Duplicate/collateral effects & 重复写、错误对象修改和旁路副作用 \\
+Skill precision & skill 被触发时真正适用的比例 \\
+Skill coverage & 同类失败被 skill 覆盖的比例 \\
+Regression rate & 原本成功任务因更新而失败的比例 \\
+Reset variance & 同 task/seed 重置后状态或结果差异 \\
+Runtime cost & 构建、运行、快照、评估和模型调用成本 \\
+\bottomrule
+\end{longtable}
+
+\subsection{成功判据}
+
+首项实验可以使用以下判据：
+
+\begin{itemize}
+  \item 所有进入 archive 的候选 Oracle 成功率为 100\%；
+  \item verifier hash 和 benchmark version 在候选间保持一致；
+  \item 诊断驱动组的 target transfer gain 显著高于随机 mutation 和直接失败反思；
+  \item skill 在 heldout 同族任务上仍有提升；
+  \item regression、collateral damage 和 reset variance 不超过预设阈值；
+  \item 辅助距离随课程推进下降，最终能够回到 $\Etarget$。
+\end{itemize}
+
+\section{代码库落地设计}
+
+当前仓库已经具备 \code{EnvDescriptor}、\code{AgentRunner}、\code{RuleHarness}、Contract、$\fA/\fT/\fO$、独立 verifier 和 benchmark adapter 边界。建议新增：
+
+\begin{verbatim}
+src/env_agent_rsi/
+  evolution/
+    mutation_surface.py   # 环境可变面与语义标签
+    failure_signature.py  # 结构化失败证据
+    mutation_spec.py      # 声明式环境改动
+    diagnose.py           # 轨迹、状态和 verifier 归因
+    propose.py            # 规则或 LLM 受约束提案
+    validate.py           # Oracle、重置、泄漏和 verifier 门禁
+    search.py             # best-first、successive halving 和剪枝
+    archive.py            # lineage DAG 与 rejected records
+    scoring.py            # transfer、距离和成本指标
+
+  learning/
+    skill_schema.py       # trigger/policy/checks/forbidden/scope
+    skill_inducer.py      # 成对轨迹生成 skill
+    skill_validator.py    # 父环境、heldout、负例和回归验证
+    learner.py            # 可替换 Learner 协议
+
+  benchmarks/
+    <name>/
+      adapter.py
+      loader.py
+      action_codec.py
+      state_codec.py
+\end{verbatim}
+
+新增 Python 文件应继续以中文模块 docstring 说明职责。依赖方向应保持：
+
+\begin{equation}
+\texttt{core}ightarrow
+\texttt{benchmark/transform}ightarrow
+\texttt{harness}ightarrow
+\texttt{evolution}ightarrow
+\texttt{learning/runner}.
+\end{equation}
+
+搜索器只操作 mutation spec 和公开 adapter 协议，不导入具体订单、浏览器或代码环境类。Learner 只读取允许的轨迹视图，不读取真实状态或 verifier 内部期望。
+
+\section{实施里程碑}
+
+\subsection{M0：规范与记录格式}
+
+实现 \code{MutationSurface}、\code{FailureSignature}、\code{MutationSpec}、node hash 和 run manifest。退出条件是现有五个本地场景都能声明可变面，并通过 schema 测试。
+
+\subsection{M1：规则诊断与手工候选}
+
+为 exactly-once、订单和代码修复场景编写确定性诊断器；每种失败只允许映射到有限 mutation library。退出条件是能够从失败轨迹自动产生候选并通过 Oracle gate。
+
+\subsection{M2：Skill Learner 与父节点回测}
+
+实现成对轨迹 skill schema、生成器、触发器和验证器。退出条件是至少一个 exactly-once skill 能在辅助环境生成，并在撤去辅助后的原环境上提升。
+
+\subsection{M3：有界搜索与谱系}
+
+实现 4--8 候选提案、successive halving、Pareto archive、父节点回测和后代剪枝。退出条件是一条命令生成完整 lineage、接受/拒绝原因和 transfer 报告。
+
+\subsection{M4：外部 benchmark}
+
+按 EnvHarness toy24、AppWorld、$\tau^3$-bench、ALFWorld/WebShop、SWE-bench/WebArena/SpreadsheetBench 的顺序接入。每个 bridge 必须先通过统一 conformance suite，才能进入环境搜索。
+
+\section{主要风险与防护}
+
+\begin{longtable}{L{3.6cm}L{5.1cm}L{5.5cm}}
+\toprule
+风险 & 表现 & 防护 \\
+\midrule
+\endfirsthead
+\toprule
+风险 & 表现 & 防护 \\
+\midrule
+\endhead
+答案泄漏 & 辅助 observation 暴露目标对象、hidden test 或 expected action & observation allowlist；特权字段审计；heldout 泛化 \\
+Verifier 漂移 & candidate 修改成功条件，使任务看似更容易 & verifier hash 固定；独立进程；只读真实状态 \\
+依赖辅助工具 & Agent 只学会调用新增 macro & 分级淡化；必须回到父环境；记录 capability distance \\
+过度特化 & skill 包含 task ID 或具体实体 & skill schema 禁止实例字段；task-level heldout \\
+环境不可解 & 故障下没有信息充分的恢复路径 & feasibility audit；Oracle gate；环境缺陷单独报告 \\
+随机性误判 & user simulator、网页或 VM 方差被当成学习效果 & 固定版本和 seed；replay 对照；重复运行与置信区间 \\
+搜索成本爆炸 & 每个节点运行完整重型 benchmark & 小子集筛选；successive halving；昂贵环境只验证稳定 mutation \\
+错误因果归因 & LLM 仅凭文本猜测失败原因 & verifier、状态 diff、fault event 和反事实优先 \\
+Skill 回归 & 安全策略导致所有写操作都过度确认或超预算 & 负例、原成功任务和预算回归测试 \\
+\bottomrule
+\end{longtable}
+
+\section{最终研究主张}
+
+本方法希望验证的不是“环境可以生成很多变化”，而是下面这条更强、更可证伪的主张：
+
+\begin{quote}
+对一个固定目标环境和固定 Target Agent，利用真实失败证据生成保持 verifier 不变的最小环境辅助，可以产生比随机环境扰动或单纯失败反思更有价值的成功经验；由这些经验归纳的策略能够在辅助撤去后，提高 Agent 在原始目标环境和同族 heldout 任务上的表现。
+\end{quote}
+
+因此，环境节点的价值由三件事共同决定：它是否保持任务真实性，它是否以较小距离产生正确经验，以及这些经验是否最终迁移回原环境。问题树帮助定位失败，环境 DAG 保存 stepping stone，Learner 负责把成功经验转化为 Agent 更新，而原生 verifier 始终是不可修改的裁判。
+
+\appendix
+
+\section{建议的最小配置示例}
+
+\begin{lstlisting}
+{
+  "schema_version": 1,
+  "target_environment": {
+    "type": "item",
+    "task": "exactly_once_append",
+    "verifier": "exactly_once"
+  },
+  "diagnosis": {
+    "min_runs": 5,
+    "evidence": ["trajectory", "fault_events", "state_diff", "verifier"]
+  },
+  "proposal": {
+    "max_candidates": 8,
+    "max_mutations_per_candidate": 1,
+    "operators": [
+      "setup.replay",
+      "contract.require",
+      "action.block",
+      "transition.clarify",
+      "observation.annotate",
+      "budget.relax"
+    ]
+  },
+  "validation": {
+    "oracle_required": true,
+    "verifier_hash_required": true,
+    "snapshot_roundtrip_required": true,
+    "privileged_leak_check": true
+  },
+  "learner": {
+    "type": "paired_trajectory_skill",
+    "parent_retest": true,
+    "heldout_validation": true
+  }
+}
+\end{lstlisting}
+
+\section{参考文献}
+
+\begin{thebibliography}{99}
+
+\bibitem{envharness}
+Huang, C. et al.
+\newblock \emph{EnvHarness: Awakening Static Worlds for Agent Learning}.
+\newblock arXiv:2608.19880, 2026.
+\newblock \url{https://arxiv.org/abs/2608.19880}
+
+\bibitem{envharnessrepo}
+Google Research.
+\newblock \emph{EnvHarness source repository}.
+\newblock \url{https://github.com/google-research/envharness}
+
+\bibitem{paired}
+Dennis, M. et al.
+\newblock Emergent Complexity and Zero-shot Transfer via Unsupervised Environment Design.
+\newblock \emph{NeurIPS}, 2020.
+\newblock \url{https://papers.nips.cc/paper/2020/hash/985e9a46e10005356bbaf194249f6856-Abstract.html}
+
+\bibitem{accel}
+Parker-Holder, J. et al.
+\newblock Evolving Curricula with Regret-Based Environment Design.
+\newblock \emph{ICML}, 2022.
+\newblock \url{https://proceedings.mlr.press/v162/parker-holder22a.html}
+
+\bibitem{appworld}
+Trivedi, H. et al.
+\newblock AppWorld: A Controllable World of Apps and People for Benchmarking Interactive Coding Agents.
+\newblock \emph{ACL}, 2024.
+\newblock \url{https://github.com/StonyBrookNLP/appworld}
+
+\bibitem{tau3repo}
+Sierra Research.
+\newblock \emph{$\tau^3$-bench repository and benchmark tasks}.
+\newblock \url{https://github.com/sierra-research/tau2-bench}
+
+\bibitem{alfworld}
+Shridhar, M. et al.
+\newblock ALFWorld: Aligning Text and Embodied Environments for Interactive Learning.
+\newblock arXiv:2010.03768, 2020.
+\newblock \url{https://github.com/alfworld/alfworld}
+
+\bibitem{webshop}
+Yao, S. et al.
+\newblock WebShop: Towards Scalable Real-World Web Interaction with Grounded Language Agents.
+\newblock \emph{NeurIPS}, 2022.
+\newblock \url{https://github.com/princeton-nlp/WebShop}
+
+\bibitem{swebench}
+Jimenez, C. E. et al.
+\newblock SWE-bench: Can Language Models Resolve Real-World GitHub Issues?
+\newblock arXiv:2310.06770, 2023.
+\newblock \url{https://github.com/SWE-bench/SWE-bench}
+
+\bibitem{webarenaverified}
+ServiceNow Research.
+\newblock \emph{WebArena-Verified}.
+\newblock \url{https://github.com/ServiceNow/webarena-verified}
+
+\bibitem{spreadsheetbench2}
+RUCKBReasoning.
+\newblock \emph{SpreadsheetBench 2: Evaluating Agents on End-to-End Business Spreadsheet Workflows}.
+\newblock \url{https://github.com/RUCKBReasoning/SpreadsheetBench-2}
+
+\end{thebibliography}
+
+\end{document}
