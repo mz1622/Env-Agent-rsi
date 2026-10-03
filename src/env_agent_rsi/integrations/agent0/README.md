@@ -12,6 +12,11 @@ rollout manager、异步工具服务器或 checkpoint 代码，只补 Agent0 原
 4. `reward.py` 将官方 evaluator 结果变成 Agent0 可加载的规则奖励；
 5. `training.py` 只向上游 `verl_tool.trainer.main_ppo` 传 Hydra overrides。
 
+Target 与本薄层共用 `agent_runtime/agent0_protocol.py` 中的 Qwen3 Hermes 协议：system
+使用 `<tools>`，assistant 使用 `<tool_call>`，环境 observation 使用 user-role 的
+`<tool_response>`。训练配置启用 Agent0 MTRL user role，避免训练和轻量 Target harness
+形成不同的上下文格式。
+
 上游自带的 `mcp_interface` 目前没有实现 `conduct_action`，所以不能直接承担 AppWorld
 执行；这里选择官方 `BaseTool` 扩展点，而不是另写 rollout 或训练框架。
 

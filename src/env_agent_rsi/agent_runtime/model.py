@@ -2,7 +2,8 @@
 
 ModelClient 接收标准 messages 和当前环境 tools，返回一个规范化 ModelOutput；具体
 OpenAI、Anthropic 或本地模型 SDK 只需实现这一接口。ScriptedModelClient 用于测试
-完整链路，CallableModelClient 用于零依赖接入外部 SDK。
+完整链路，CallableModelClient 用于零依赖接入外部 SDK。Target 动作统一编码成
+Agent0/Qwen3 Hermes 文本，provider 不再决定下游工具消息形状。
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
 from env_agent_rsi.core.protocol import Action, JsonObject
+from env_agent_rsi.agent_runtime.agent0_protocol import render_tool_call
 
 
 Message = Mapping[str, Any]
@@ -27,16 +29,21 @@ class ModelOutput:
     arguments: Mapping[str, Any] = field(default_factory=dict)
     content: str = ""
     call_id: str = "tool-call"
+    serialized_action: bool = False
 
     @classmethod
     def from_action(cls, action: Action, call_id: str = "tool-call") -> "ModelOutput":
         return cls(
             tool_name=action.tool,
             arguments=dict(action.arguments),
+            content=render_tool_call(action.tool, action.arguments),
             call_id=call_id,
+            serialized_action=True,
         )
 
     def to_assistant_message(self) -> JsonObject:
+        if self.serialized_action:
+            return {"role": "assistant", "content": self.content}
         message: JsonObject = {"role": "assistant", "content": self.content}
         if self.tool_name is not None:
             message["tool_calls"] = [

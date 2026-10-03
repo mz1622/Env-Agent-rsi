@@ -6,10 +6,12 @@
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any, Callable, Mapping
 
+from env_agent_rsi.agent_runtime.agent0_protocol import (
+    parse_tool_call,
+    render_tool_response,
+)
 from env_agent_rsi.benchmarks.appworld import AppWorldProcessBackend
 from env_agent_rsi.integrations.agent0.reward import make_evaluation_marker
 from env_agent_rsi.integrations.agent0.upstream import ensure_agent0_executor_importable
@@ -20,7 +22,6 @@ ensure_agent0_executor_importable()
 from verl_tool.servers.tools.base import BaseTool, register_tool  # noqa: E402
 
 
-TOOL_CALL_PATTERN = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 SUPPORTED_TOOLS = frozenset({"get_api_docs", "execute_python", "finish"})
 
 
@@ -41,30 +42,19 @@ class AppWorldAgent0Tool(BaseTool):
 
     def get_usage_inst(self) -> str:
         return (
-            "Use exactly one action per turn as <tool_call>{\"name\": "
-            "\"get_api_docs|execute_python|finish\", \"arguments\": {...}}"
+            'Use exactly one action per turn as <tool_call>{"name": '
+            '"get_api_docs|execute_python|finish", "arguments": {...}}'
             "</tool_call>."
         )
 
     def parse_action(self, action: str) -> tuple[dict[str, Any], bool]:
         """从 Agent0 的 action stop token 输出中读取单个 JSON 工具调用。"""
 
-        matches = list(TOOL_CALL_PATTERN.finditer(action or ""))
-        if not matches:
-            return {}, False
-        try:
-            value = json.loads(matches[-1].group(1))
-        except json.JSONDecodeError:
-            return {}, False
-        if not isinstance(value, dict):
-            return {}, False
-        name = value.get("name")
-        arguments = value.get("arguments", {})
-        if name not in SUPPORTED_TOOLS or not isinstance(arguments, dict):
-            return {}, False
-        return {"name": str(name), "arguments": dict(arguments)}, True
+        return parse_tool_call(action, supported_tools=SUPPORTED_TOOLS)
 
-    def _new_env(self, trajectory_id: str, extra_field: Mapping[str, Any]) -> dict[str, Any]:
+    def _new_env(
+        self, trajectory_id: str, extra_field: Mapping[str, Any]
+    ) -> dict[str, Any]:
         task_id = str(extra_field.get("task_id", ""))
         if not task_id:
             raise ValueError("Agent0 extra_info requires task_id")
@@ -72,9 +62,7 @@ class AppWorldAgent0Tool(BaseTool):
             task_id=task_id,
             appworld_root=extra_field.get("appworld_root"),
             python_executable=extra_field.get("python_executable"),
-            experiment_name=str(
-                extra_field.get("experiment_name", "agent0_appworld")
-            ),
+            experiment_name=str(extra_field.get("experiment_name", "agent0_appworld")),
             max_interactions=int(extra_field.get("max_interactions", 40)),
             request_timeout=float(extra_field.get("request_timeout", 120.0)),
         )
@@ -99,7 +87,7 @@ class AppWorldAgent0Tool(BaseTool):
         }
         marker = make_evaluation_marker(payload, reward_key)
         return {
-            "obs": (
+            "obs": render_tool_response(
                 "Official AppWorld evaluation completed. End the trajectory without "
                 f"another tool call.\n{marker}"
             ),
@@ -114,7 +102,7 @@ class AppWorldAgent0Tool(BaseTool):
 
         parsed, valid = self.parse_action(action)
         if not valid:
-            return self.get_usage_inst(), False, False
+            return render_tool_response(self.get_usage_inst()), False, False
         env = self.env_cache.get(trajectory_id)
         try:
             if env is None:
@@ -126,7 +114,7 @@ class AppWorldAgent0Tool(BaseTool):
             else:
                 native = env["backend"].step(parsed["name"], parsed["arguments"])
                 visible = native.get("observation", native)
-                observation = json.dumps(visible, ensure_ascii=False, default=str)
+                observation = render_tool_response(visible)
                 if parsed["name"] == "finish" or bool(native.get("terminated")):
                     env["finalized"] = True
                     observation = self._evaluation_observation(
@@ -135,7 +123,13 @@ class AppWorldAgent0Tool(BaseTool):
         except Exception as exc:
             if env is not None:
                 self.save_env(trajectory_id, env)
-            return f"AppWorld tool error: {type(exc).__name__}: {exc}", False, False
+            return (
+                render_tool_response(
+                    f"AppWorld tool error: {type(exc).__name__}: {exc}"
+                ),
+                False,
+                False,
+            )
         self.update_env(
             trajectory_id,
             env,
@@ -153,4 +147,3 @@ class AppWorldAgent0Tool(BaseTool):
         env = self.env_cache.pop(trajectory_id, None)
         if env is not None:
             env["backend"].close()
-

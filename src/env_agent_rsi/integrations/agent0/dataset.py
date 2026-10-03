@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from env_agent_rsi.agent_system.prompts import load_prompt, load_skill
+from env_agent_rsi.agent_runtime.agent0_protocol import render_tool_register
 from env_agent_rsi.benchmarks.appworld import APPWORLD_TOOLS, AppWorldProcessBackend
 
 
@@ -33,18 +34,13 @@ def build_agent0_system_prompt(
 
     prompt = load_prompt(prompt_path)
     skills = [load_skill(path).render() for path in skill_paths]
-    tool_register = json.dumps(list(APPWORLD_TOOLS), ensure_ascii=False, sort_keys=True)
     return "\n\n".join(
         (
             prompt.content.strip(),
             "[Skill Register]\n" + "\n\n".join(skills),
-            "[Tool Register]\n" + tool_register,
-            (
-                "[Agent0 Action Protocol]\nEmit exactly one tool call per turn as "
-                '<tool_call>{"name":"TOOL_NAME","arguments":{...}}</tool_call>. '
-                "After the environment reports official evaluation, end with a normal "
-                "response and no tool call."
-            ),
+            render_tool_register(APPWORLD_TOOLS),
+            "After the environment reports official evaluation, end with a normal "
+            "response and no tool call.",
         )
     )
 
@@ -67,7 +63,10 @@ def build_agent0_record(
         "data_source": "appworld",
         "ability": "stateful_tool_use",
         "prompt": [
-            {"role": "system", "content": system_prompt or build_agent0_system_prompt()},
+            {
+                "role": "system",
+                "content": system_prompt or build_agent0_system_prompt(),
+            },
             {"role": "user", "content": instruction},
         ],
         "reward_model": {
@@ -135,7 +134,9 @@ def write_parquet_splits(
     """使用 Agent0 已依赖的 Hugging Face datasets 写 train/validation parquet。"""
 
     if len(records) <= val_count:
-        raise ValueError("records must contain at least one train item beyond val_count")
+        raise ValueError(
+            "records must contain at least one train item beyond val_count"
+        )
     from datasets import Dataset
 
     output.mkdir(parents=True, exist_ok=True)
@@ -153,9 +154,7 @@ def write_parquet_splits(
         "train_path": str(train_path),
         "validation_path": str(validation_path),
         "train_task_ids": [item["extra_info"]["task_id"] for item in train],
-        "validation_task_ids": [
-            item["extra_info"]["task_id"] for item in validation
-        ],
+        "validation_task_ids": [item["extra_info"]["task_id"] for item in validation],
         "protected_content_committed": False,
     }
     (output / "manifest.json").write_text(

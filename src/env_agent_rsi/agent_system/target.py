@@ -35,7 +35,5 @@ class TargetAgent(ConfiguredAgent):
             skill_texts=[skill.render() for skill in self.skills],
             max_steps=self.config.max_steps,
             max_context_messages=self.config.max_context_messages,
-            memory_retriever=self.memory,
-            memory_top_k=self.config.memory.top_k,
         )
         return runner.run(seed=seed, options=options)

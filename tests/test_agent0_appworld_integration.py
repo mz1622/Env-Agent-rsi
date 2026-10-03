@@ -71,15 +71,21 @@ def test_signed_reward_rejects_forgery_and_wrong_task() -> None:
         "appworld", marker, {"task_id": "task-1"}, {"reward_key": "secret-key"}
     )
     assert score["score"] == 1.0
-    assert compute_score(
-        "appworld",
-        marker.replace("signature=\"", "signature=\"0"),
-        {"task_id": "task-1"},
-        {"reward_key": "secret-key"},
-    )["score"] == 0.0
-    assert compute_score(
-        "appworld", marker, {"task_id": "task-2"}, {"reward_key": "secret-key"}
-    )["score"] == 0.0
+    assert (
+        compute_score(
+            "appworld",
+            marker.replace('signature="', 'signature="0'),
+            {"task_id": "task-1"},
+            {"reward_key": "secret-key"},
+        )["score"]
+        == 0.0
+    )
+    assert (
+        compute_score(
+            "appworld", marker, {"task_id": "task-2"}, {"reward_key": "secret-key"}
+        )["score"]
+        == 0.0
+    )
 
 
 def test_agent0_tool_routes_finish_and_closes_worker() -> None:
@@ -95,13 +101,18 @@ def test_agent0_tool_routes_finish_and_closes_worker() -> None:
     assert valid is True
     assert isinstance(observation, dict)
     assert observation["reward"] == 1.0
-    assert compute_score(
-        "appworld",
-        observation["obs"],
-        {"task_id": "task-1"},
-        {"reward_key": "secret-key"},
-    )["score"] == 1.0
+    assert (
+        compute_score(
+            "appworld",
+            observation["obs"],
+            {"task_id": "task-1"},
+            {"reward_key": "secret-key"},
+        )["score"]
+        == 1.0
+    )
     backend = FakeBackend.instances[0]
+    assert observation["obs"].startswith("<tool_response>")
+    assert observation["obs"].endswith("</tool_response>")
     tool.delete_env("trajectory-1")
     assert backend.closed is True
 
@@ -125,7 +136,10 @@ def test_agent0_records_write_expected_parquet_schema(tmp_path: Path) -> None:
     assert records[0]["reward_model"]["ground_truth"] == {"task_id": "task-0"}
     system = records[0]["prompt"][0]["content"]
     assert "[Skill Register]" in system
-    assert "[Tool Register]" in system
+    assert "# Tools" in system
+    assert "<tools>" in system
+    assert "</tools>" in system
+    assert "[Tool Register]" not in system
 
 
 def test_training_command_reuses_agent0_main_ppo() -> None:
@@ -135,4 +149,6 @@ def test_training_command_reuses_agent0_main_ppo() -> None:
     command = build_training_command(config)
     assert command[1:3] == ["-m", "verl_tool.trainer.main_ppo"]
     assert "actor_rollout_ref.model.path=Qwen/Qwen3-4B-Base" in command
+    assert "actor_rollout_ref.agent.enable_mtrl=True" in command
+    assert "actor_rollout_ref.agent.mtrl_role=user" in command
     assert any(value.startswith("custom_reward_function.path=") for value in command)

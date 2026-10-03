@@ -82,6 +82,8 @@ def build_training_command(config: Mapping[str, Any]) -> list[str]:
         "actor_rollout_ref.agent.additional_eos_token_ids=[151645]",
         f"actor_rollout_ref.agent.action_stop_tokens={stop_tokens}",
         "actor_rollout_ref.agent.mask_observations=True",
+        "actor_rollout_ref.agent.enable_mtrl=True",
+        "actor_rollout_ref.agent.mtrl_role=user",
         "actor_rollout_ref.agent.max_action_length=4096",
         "actor_rollout_ref.rollout.name=vllm",
         "actor_rollout_ref.rollout.mode=async",
@@ -153,9 +155,7 @@ def main() -> None:
         )
         if value
     )
-    subprocess.run(
-        command, cwd=EXECUTOR_TRAIN_ROOT, env=environment, check=True
-    )
+    subprocess.run(command, cwd=EXECUTOR_TRAIN_ROOT, env=environment, check=True)
 
 
 if __name__ == "__main__":

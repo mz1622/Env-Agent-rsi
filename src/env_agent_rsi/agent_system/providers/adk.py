@@ -12,6 +12,7 @@ from copy import deepcopy
 from typing import Any, Callable, Mapping, Sequence
 
 from env_agent_rsi.agent_runtime.model import Message, ModelOutput
+from env_agent_rsi.agent_runtime.agent0_protocol import render_tool_call
 from env_agent_rsi.core.protocol import JsonObject
 
 
@@ -26,7 +27,9 @@ class ADKModelClient:
         args: Mapping[str, Any] | None = None,
     ) -> None:
         self.model = model
-        self.executor = _load_executor(executor) if isinstance(executor, str) else executor
+        self.executor = (
+            _load_executor(executor) if isinstance(executor, str) else executor
+        )
         self.args = deepcopy(dict(args or {}))
 
     def generate(
@@ -45,13 +48,18 @@ class ADKModelClient:
         arguments = result.get("arguments", {})
         if isinstance(arguments, str):
             arguments = json.loads(arguments or "{}")
+        tool_name = (
+            str(result["tool_name"]) if result.get("tool_name") is not None else None
+        )
+        content = str(result.get("content", ""))
+        if tool_name is not None:
+            content = render_tool_call(tool_name, arguments)
         return ModelOutput(
-            tool_name=(
-                str(result["tool_name"]) if result.get("tool_name") is not None else None
-            ),
+            tool_name=tool_name,
             arguments=dict(arguments),
-            content=str(result.get("content", "")),
+            content=content,
             call_id=str(result.get("call_id", "adk-tool-call")),
+            serialized_action=tool_name is not None,
         )
 
 

@@ -6,7 +6,6 @@
 
 from env_agent_rsi.agent_system.config import (
     AgentConfig,
-    MemorySettings,
     ProviderSettings,
     load_agent_config,
 )
@@ -15,7 +14,6 @@ from env_agent_rsi.agent_system.context import ConversationContext
 __all__ = [
     "AgentConfig",
     "ConversationContext",
-    "MemorySettings",
     "ProviderSettings",
     "load_agent_config",
 ]

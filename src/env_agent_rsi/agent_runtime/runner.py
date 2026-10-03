@@ -1,8 +1,8 @@
-"""模型驱动的通用 episode runner。
+"""使用 Agent0/Qwen3 工具协议执行环境任务的通用 episode runner。
 
 Runner 在 reset 后通过 ``env.describe()`` 获取任务与有效工具契约，把 tools 与消息
-分开传给 ModelClient；每轮只把 Agent 可见 observation 写回模型历史，privileged
-info 仅进入诊断轨迹。若 contract version 改变，下一轮自动重新绑定工具。
+渲染进 system，并只把 Agent 可见 observation 作为 ``<tool_response>`` 写回历史；
+privileged info 仅进入诊断轨迹。若 contract version 改变，下一轮自动重建工具注册。
 """
 
 from __future__ import annotations
@@ -11,13 +11,9 @@ from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Mapping
 
-from env_agent_rsi.agent_runtime.model import ModelClient
+from env_agent_rsi.agent_runtime.agent0_protocol import render_tool_call
+from env_agent_rsi.agent_runtime.model import ModelClient, ModelOutput
 from env_agent_rsi.agent_system.context import ConversationContext
-from env_agent_rsi.agent_system.memory import (
-    MemoryQuery,
-    MemoryRetriever,
-    NullMemoryRetriever,
-)
 from env_agent_rsi.core.protocol import (
     Action,
     ActionableEnv,
@@ -65,8 +61,6 @@ class AgentRunner:
         skill_texts: tuple[str, ...] | list[str] = (),
         max_steps: int = 30,
         max_context_messages: int = 80,
-        memory_retriever: MemoryRetriever | None = None,
-        memory_top_k: int = 0,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps must be positive")
@@ -76,10 +70,6 @@ class AgentRunner:
         self.skill_texts = tuple(skill_texts)
         self.max_steps = max_steps
         self.max_context_messages = max_context_messages
-        self.memory_retriever = memory_retriever or NullMemoryRetriever()
-        if memory_top_k < 0:
-            raise ValueError("memory_top_k must be non-negative")
-        self.memory_top_k = memory_top_k
 
     def run(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
@@ -89,33 +79,28 @@ class AgentRunner:
         context = ConversationContext(
             self.system_prompt,
             self.skill_texts,
+            descriptor.tools,
             max_messages=self.max_context_messages,
         )
         initial_observation = _without_contract(reset_response.observation)
-        retrieved_memory = self.memory_retriever.retrieve(
-            MemoryQuery(
-                task_id=descriptor.task_id,
-                instruction=descriptor.instruction,
-                initial_observation=initial_observation,
-            ),
-            limit=self.memory_top_k,
-        )
-        context.start_task(
-            {
-                "task_id": descriptor.task_id,
-                "task": descriptor.instruction,
-                "retrieved_memory": list(retrieved_memory),
-                "initial_observation": initial_observation,
-            }
-        )
+        task_content = descriptor.instruction
+        if initial_observation:
+            task_content += (
+                "\n\n<initial_observation>\n"
+                + _json(initial_observation)
+                + "\n</initial_observation>"
+            )
+        context.start_task(task_content)
         trace: list[JsonObject] = []
         stopped_reason = "max_steps"
 
         for step_index in range(1, self.max_steps + 1):
-            output = self.model.generate(context.for_model(), descriptor.tools)
+            context.bind_tools(descriptor.tools)
+            output = self.model.generate(context.for_model(), ())
             if output.tool_name is None:
-                stopped_reason = "model_returned_no_tool"
+                stopped_reason = "model_finished"
                 break
+            output = _as_agent0_action(output)
 
             action = Action(output.tool_name, dict(output.arguments))
             response = self.env.step(action)
@@ -128,9 +113,7 @@ class AgentRunner:
                 }
             )
             context.append_assistant(output)
-            context.append_tool_result(
-                output.call_id, output.tool_name, response.observation
-            )
+            context.append_tool_result(response.observation)
             descriptor = self.env.describe()
             if response.terminated or response.truncated:
                 stopped_reason = "terminated" if response.terminated else "truncated"
@@ -154,3 +137,27 @@ def _without_contract(observation: Mapping[str, Any]) -> JsonObject:
         for key, value in observation.items()
         if key not in {"tools", "task", "task_id", "contract_version", "metadata"}
     }
+
+
+def _json(value: Mapping[str, Any]) -> str:
+    """稳定序列化初始观察，避免任务上下文因字典顺序漂移。"""
+
+    import json
+
+    return json.dumps(dict(value), ensure_ascii=False, sort_keys=True)
+
+
+def _as_agent0_action(output: ModelOutput) -> ModelOutput:
+    """把 provider 的结构化动作规范化为上下文唯一接受的 Hermes 文本。"""
+
+    if output.serialized_action or output.tool_name is None:
+        return output
+    call = render_tool_call(output.tool_name, output.arguments)
+    prefix = output.content.strip()
+    return ModelOutput(
+        tool_name=output.tool_name,
+        arguments=dict(output.arguments),
+        content=f"{prefix}\n{call}" if prefix else call,
+        call_id=output.call_id,
+        serialized_action=True,
+    )

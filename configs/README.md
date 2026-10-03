@@ -6,6 +6,6 @@
 - `agents/`：环境侧 Diagnostic/Modifier 的模型配置；
 - `benchmarks/`：AppWorld 官方 revision、数据版本和本地布局；
 - `environment_changes/`：AppWorld 当前支持的环境变化组合；
-- `prompts/`、`skills/`、`memory/`：提示、工具策略和只读 memory 接口。
+- `prompts/`、`skills/`：提示与工具使用策略。
 
 任务正文、数据库、ground truth、生成后的 parquet 与密钥不进入配置目录。

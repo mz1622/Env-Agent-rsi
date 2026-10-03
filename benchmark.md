@@ -107,7 +107,7 @@ configs/benchmarks/<benchmark>/
 - task 的语义目标；
 - 原始 verifier/evaluator 的代码和哈希；
 - hidden tests、golden answer 或特权数据库状态对 Agent 的可见性；
-- 同一对比实验中的模型、system prompt、skills 和 memory；
+- 同一对比实验中的模型、system prompt 和 skills；
 - benchmark 数据版本和容器/镜像版本。
 
 允许变化的只是环境边界：初始状态重放、工具 schema、action guard、转移故障、观察格式、预算和可验证的环境组合。

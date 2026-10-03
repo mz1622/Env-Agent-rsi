@@ -15,6 +15,10 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from env_agent_rsi.agent_runtime.model import Message, ModelOutput
+from env_agent_rsi.agent_runtime.agent0_protocol import (
+    parse_tool_call,
+    render_tool_call,
+)
 from env_agent_rsi.core.protocol import JsonObject
 
 
@@ -83,7 +87,9 @@ class APIModelClient:
             except FileNotFoundError:
                 value = ""
             except OSError as exc:
-                raise RuntimeError(f"cannot read API key file: {self.api_key_file}") from exc
+                raise RuntimeError(
+                    f"cannot read API key file: {self.api_key_file}"
+                ) from exc
             if value:
                 return value
         api_key = os.environ.get(self.api_key_env, "").strip()
@@ -101,6 +107,15 @@ def _parse_chat_completion(result: Mapping[str, Any]) -> ModelOutput:
     except (KeyError, IndexError, TypeError) as exc:
         raise ValueError("API response does not contain choices[0].message") from exc
     content = str(message.get("content") or "")
+    parsed, valid = parse_tool_call(content)
+    if valid:
+        return ModelOutput(
+            tool_name=str(parsed["name"]),
+            arguments=dict(parsed["arguments"]),
+            content=content,
+            call_id=str(message.get("id", "agent0-tool-call")),
+            serialized_action=True,
+        )
     calls = message.get("tool_calls") or []
     if not calls:
         return ModelOutput(tool_name=None, content=content)
@@ -111,9 +126,12 @@ def _parse_chat_completion(result: Mapping[str, Any]) -> ModelOutput:
         arguments = json.loads(arguments or "{}")
     if not isinstance(arguments, Mapping):
         raise ValueError("tool call arguments must decode to an object")
+    name = str(function["name"])
+    normalized_content = render_tool_call(name, arguments)
     return ModelOutput(
-        tool_name=str(function["name"]),
+        tool_name=name,
         arguments=dict(arguments),
-        content=content,
+        content=normalized_content,
         call_id=str(call.get("id", "tool-call")),
+        serialized_action=True,
     )

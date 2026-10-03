@@ -1,13 +1,12 @@
 """配置驱动诊断/修改 Agent、JSON 资源与结构化输出修复测试。
 
 Target 的训练和多轮工具循环已交给 Agent0；这里继续用 Callable 模型验证环境进化侧的
-Diagnostic、Modifier、memory 检索以及 provider 参数覆盖，不访问外部 API。
+Diagnostic、Modifier 以及 provider 参数覆盖，不访问外部 API。
 """
 
 from __future__ import annotations
 
 import json
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -16,7 +15,6 @@ from env_agent_rsi.agent_runtime.model import ModelOutput
 from env_agent_rsi.agent_system.config import load_agent_config
 from env_agent_rsi.agent_system.diagnostic import DiagnosticAgent
 from env_agent_rsi.agent_system.modifier import EnvironmentModificationAgent
-from env_agent_rsi.agent_system.memory import JsonMemoryStore, MemoryQuery
 from env_agent_rsi.agent_system.providers.adk import ADKModelClient
 from env_agent_rsi.agent_system.providers.api import APIModelClient
 from env_agent_rsi.agent_system.providers.factory import build_model_client
@@ -63,9 +61,6 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(config.provider.args["timeout"], 180)
         self.assertEqual(config.provider.base_url, "https://api.deepseek.com")
         self.assertEqual(config.provider.api_key_file, ROOT / "api.txt")
-        self.assertEqual(config.memory.type, "null")
-        self.assertIsNone(config.memory.path)
-        self.assertEqual(config.memory.top_k, 0)
         client = build_model_client(config.provider)
         self.assertIsInstance(client, APIModelClient)
 
@@ -89,51 +84,6 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(output.tool_name, "finish")
         self.assertEqual(received["model"], "adk-test-model")
         self.assertEqual(received["session_name"], "experiment-1")
-
-    def test_json_memory_retrieval_is_scoped_and_ranked(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "memory.json"
-            path.write_text(
-                json.dumps(
-                    {
-                        "schema_version": 1,
-                        "records": [
-                            {
-                                "id": "global-low",
-                                "content": {"lesson": "inspect state"},
-                                "task_ids": [],
-                                "keywords": ["target-item"],
-                                "priority": 1,
-                            },
-                            {
-                                "id": "task-high",
-                                "content": {"lesson": "reuse the idempotency key"},
-                                "task_ids": ["22cc237_3"],
-                                "keywords": ["write"],
-                                "priority": 0,
-                            },
-                            {
-                                "id": "other-task",
-                                "content": {"lesson": "irrelevant"},
-                                "task_ids": ["another-task"],
-                                "keywords": [],
-                                "priority": 1000,
-                            },
-                        ],
-                    }
-                ),
-                encoding="utf-8",
-            )
-            memory = JsonMemoryStore(path)
-            records = memory.retrieve(
-                MemoryQuery(
-                    task_id="22cc237_3",
-                    instruction="write target-item exactly once",
-                    initial_observation={"items": []},
-                ),
-                limit=2,
-            )
-        self.assertEqual([record["id"] for record in records], ["task-high", "global-low"])
 
     def test_diagnostic_agent_parses_structured_failure(self) -> None:
         content = (
