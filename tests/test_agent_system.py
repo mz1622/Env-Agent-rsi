@@ -1,44 +1,71 @@
-"""配置驱动 Agent、JSON 资源与多轮工具上下文测试。
+"""配置驱动诊断/修改 Agent、JSON 资源与结构化输出修复测试。
 
-测试使用 Scripted/Callable 模型，不访问外部 API；它验证 Target 与 Diagnostic 的角色
-边界、skill 注入、OpenAI 标准 tool message 以及 provider 参数的统一覆盖方式。
+Target 的训练和多轮工具循环已交给 Agent0；这里继续用 Callable 模型验证环境进化侧的
+Diagnostic、Modifier、memory 检索以及 provider 参数覆盖，不访问外部 API。
 """
 
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
-from env_agent_rsi.agent_runtime import CallableModelClient, ScriptedModelClient
+from env_agent_rsi.agent_runtime import CallableModelClient
 from env_agent_rsi.agent_runtime.model import ModelOutput
 from env_agent_rsi.agent_system.config import load_agent_config
 from env_agent_rsi.agent_system.diagnostic import DiagnosticAgent
+from env_agent_rsi.agent_system.modifier import EnvironmentModificationAgent
+from env_agent_rsi.agent_system.memory import JsonMemoryStore, MemoryQuery
 from env_agent_rsi.agent_system.providers.adk import ADKModelClient
 from env_agent_rsi.agent_system.providers.api import APIModelClient
 from env_agent_rsi.agent_system.providers.factory import build_model_client
-from env_agent_rsi.agent_system.target import TargetAgent
-from env_agent_rsi.core.protocol import Action
-from env_agent_rsi.harness.factory import build_environment, load_spec
+from env_agent_rsi.evolution import (
+    FailureSignature,
+    MutationSurface,
+    ToolSemantics,
+    default_mutation_catalog,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGET_CONFIG = ROOT / "configs/agents/target_agent.json"
 DIAGNOSTIC_CONFIG = ROOT / "configs/agents/diagnostic_agent.json"
-BASELINE = ROOT / "configs/micro_api/baseline.json"
+MODIFIER_CONFIG = ROOT / "configs/agents/environment_modifier_agent.json"
 
 
 class AgentConfigurationTests(unittest.TestCase):
+    def test_environment_side_llm_roles_share_deepseek_flash(self) -> None:
+        configs = [
+            load_agent_config(DIAGNOSTIC_CONFIG),
+            load_agent_config(MODIFIER_CONFIG),
+        ]
+        self.assertEqual({item.provider.type for item in configs}, {"api"})
+        self.assertEqual({item.provider.model for item in configs}, {"deepseek-flash"})
+        self.assertEqual(
+            {item.provider.base_url for item in configs},
+            {"https://api.deepseek.com"},
+        )
+        self.assertEqual(
+            {item.provider.api_key_file for item in configs},
+            {ROOT / "api.txt"},
+        )
+
     def test_config_resolves_prompt_skills_and_provider_overrides(self) -> None:
         config = load_agent_config(
-            TARGET_CONFIG,
+            DIAGNOSTIC_CONFIG,
             provider_overrides={"model": "test-model", "args": {"temperature": 1}},
         )
-        self.assertEqual(config.role, "target")
+        self.assertEqual(config.role, "diagnostic")
         self.assertTrue(config.system_prompt.is_file())
         self.assertTrue(all(path.is_file() for path in config.skills))
         self.assertEqual(config.provider.model, "test-model")
         self.assertEqual(config.provider.args["temperature"], 1)
-        self.assertEqual(config.provider.args["timeout"], 60)
+        self.assertEqual(config.provider.args["timeout"], 180)
+        self.assertEqual(config.provider.base_url, "https://api.deepseek.com")
+        self.assertEqual(config.provider.api_key_file, ROOT / "api.txt")
+        self.assertEqual(config.memory.type, "null")
+        self.assertIsNone(config.memory.path)
+        self.assertEqual(config.memory.top_k, 0)
         client = build_model_client(config.provider)
         self.assertIsInstance(client, APIModelClient)
 
@@ -63,47 +90,179 @@ class AgentConfigurationTests(unittest.TestCase):
         self.assertEqual(received["model"], "adk-test-model")
         self.assertEqual(received["session_name"], "experiment-1")
 
-    def test_target_agent_executes_multiple_tool_turns_with_loaded_skill(self) -> None:
-        model = ScriptedModelClient(
-            [
-                Action(
-                    "append_item",
+    def test_json_memory_retrieval_is_scoped_and_ranked(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "memory.json"
+            path.write_text(
+                json.dumps(
                     {
-                        "value": "target-item",
-                        "idempotency_key": "task:target-item",
-                    },
+                        "schema_version": 1,
+                        "records": [
+                            {
+                                "id": "global-low",
+                                "content": {"lesson": "inspect state"},
+                                "task_ids": [],
+                                "keywords": ["target-item"],
+                                "priority": 1,
+                            },
+                            {
+                                "id": "task-high",
+                                "content": {"lesson": "reuse the idempotency key"},
+                                "task_ids": ["22cc237_3"],
+                                "keywords": ["write"],
+                                "priority": 0,
+                            },
+                            {
+                                "id": "other-task",
+                                "content": {"lesson": "irrelevant"},
+                                "task_ids": ["another-task"],
+                                "keywords": [],
+                                "priority": 1000,
+                            },
+                        ],
+                    }
                 ),
-                Action("list_items", {"cursor": 0, "limit": 10}),
-                Action("finish", {}),
-            ]
-        )
-        agent = TargetAgent.from_config(TARGET_CONFIG, model=model)
-        result = agent.run(build_environment(load_spec(BASELINE)))
-        self.assertTrue(result.evaluation.success)
-        self.assertEqual(result.steps, 3)
-        self.assertIn("[Skill: ambiguous-write-recovery]", result.messages[0]["content"])
-        assistants = [item for item in result.messages if item["role"] == "assistant"]
-        tools = [item for item in result.messages if item["role"] == "tool"]
-        self.assertEqual(len(assistants), 3)
-        self.assertEqual(len(tools), 3)
-        self.assertIn("tool_calls", assistants[0])
-        self.assertIn("tool_call_id", tools[0])
-        self.assertEqual(len(model.requests), 3)
-        self.assertTrue(
-            any(message["role"] == "tool" for message in model.requests[1]["messages"])
-        )
+                encoding="utf-8",
+            )
+            memory = JsonMemoryStore(path)
+            records = memory.retrieve(
+                MemoryQuery(
+                    task_id="22cc237_3",
+                    instruction="write target-item exactly once",
+                    initial_observation={"items": []},
+                ),
+                limit=2,
+            )
+        self.assertEqual([record["id"] for record in records], ["task-high", "global-low"])
 
     def test_diagnostic_agent_parses_structured_failure(self) -> None:
         content = (
             '{"category":"ambiguous_commit","phase":"observation",'
             '"summary":"write status was hidden","evidence":[],"confidence":0.9,'
-            '"candidate_changes":[{"phase":"observation",'
-            '"implementation":"confirm_commit","parameters":{}}]}'
+            '"environment_actionable":true,'
+            '"primary_change":{"phase":"contract","implementation":"require_argument",'
+            '"operation":"add","parameters":{"tool":"append_item",'
+            '"argument":"idempotency_key"}},'
+            '"priority_reason":"prevents ambiguous retry first",'
+            '"causal_chain":["commit hidden","write repeated"],'
+            '"expected_effect":"fewer repeated writes",'
+            '"falsification_condition":"agent still repeats",'
+            '"regression_guards":["verifier unchanged"]}'
+        )
+        requests = []
+
+        def generate(messages, tools):
+            requests.append(list(messages))
+            return ModelOutput(tool_name=None, content=content)
+
+        model = CallableModelClient(generate)
+        agent = DiagnosticAgent.from_config(DIAGNOSTIC_CONFIG, model=model)
+        signature = agent.diagnose(
+            {
+                "evaluation": {
+                    "success": False,
+                    "reason": "target missing",
+                    "metrics": {},
+                },
+                "trace": [],
+                "stopped_reason": "terminated",
+                "steps": 3,
+                "final_descriptor": {
+                    "task_id": "diagnostic-task",
+                    "task": "complete the diagnostic task",
+                },
+            }
+        )
+        self.assertEqual(signature.category, "ambiguous_commit")
+        self.assertEqual(signature.phase, "observation")
+        self.assertTrue(signature.environment_actionable)
+        self.assertEqual(signature.primary_change["implementation"], "require_argument")
+        diagnostic_payload = json.loads(requests[0][1]["content"])
+        self.assertEqual(diagnostic_payload["task"]["task_id"], "diagnostic-task")
+        self.assertEqual(
+            diagnostic_payload["task"]["instruction"],
+            "complete the diagnostic task",
+        )
+        self.assertEqual(diagnostic_payload["episode"]["steps"], 3)
+
+    def test_modifier_returns_one_registered_executable_mutation(self) -> None:
+        content = (
+            '{"phase":"contract","implementation":"require_argument",'
+            '"operation":"add","target_implementation":null,'
+            '"parameters":{"tool":"append_item","argument":"idempotency_key"},'
+            '"rationale":"make retry identity explicit"}'
         )
         model = CallableModelClient(
             lambda messages, tools: ModelOutput(tool_name=None, content=content)
         )
-        agent = DiagnosticAgent.from_config(DIAGNOSTIC_CONFIG, model=model)
+        agent = EnvironmentModificationAgent.from_config(MODIFIER_CONFIG, model=model)
+        diagnosis = FailureSignature.from_dict(
+            {
+                "category": "ambiguous_commit",
+                "phase": "observation",
+                "summary": "commit status hidden",
+                "environment_actionable": True,
+                "primary_change": {
+                    "phase": "contract",
+                    "implementation": "require_argument",
+                    "operation": "add",
+                    "parameters": {
+                        "tool": "append_item",
+                        "argument": "idempotency_key",
+                    },
+                },
+            }
+        )
+        surface = MutationSurface(
+            tools=(ToolSemantics("append_item", "write"),),
+        )
+        mutation = agent.propose(
+            diagnosis,
+            environment_spec={"rules": {}},
+            surface=surface,
+            catalog=default_mutation_catalog(),
+        )
+        self.assertEqual(mutation.phase, "contract")
+        self.assertEqual(mutation.implementation, "require_argument")
+        self.assertEqual(mutation.operation, "add")
+
+    def test_diagnostic_repairs_string_arrays_before_parsing(self) -> None:
+        outputs = iter(
+            [
+                ModelOutput(
+                    tool_name=None,
+                    content=(
+                        '{"category":"bad-shape","phase":"agent",'
+                        '"summary":"bad","evidence":"not-an-array",'
+                        '"confidence":0.5,"environment_actionable":false,'
+                        '"primary_change":null,"priority_reason":"bad",'
+                        '"causal_chain":"not-an-array","expected_effect":"",'
+                        '"falsification_condition":"","regression_guards":[]}'
+                    ),
+                ),
+                ModelOutput(
+                    tool_name=None,
+                    content=(
+                        '{"category":"agent_policy","phase":"agent",'
+                        '"summary":"missed prerequisite","evidence":[{"step":2}],'
+                        '"confidence":0.8,"environment_actionable":false,'
+                        '"primary_change":null,"priority_reason":"earliest",'
+                        '"causal_chain":["missed prerequisite"],'
+                        '"expected_effect":"none","falsification_condition":"none",'
+                        '"regression_guards":["verifier unchanged"]}'
+                    ),
+                ),
+            ]
+        )
+        requests = []
+
+        def generate(messages, tools):
+            requests.append(list(messages))
+            return next(outputs)
+
+        agent = DiagnosticAgent.from_config(
+            DIAGNOSTIC_CONFIG, model=CallableModelClient(generate)
+        )
         signature = agent.diagnose(
             {
                 "evaluation": {
@@ -114,9 +273,89 @@ class AgentConfigurationTests(unittest.TestCase):
                 "trace": [],
             }
         )
-        self.assertEqual(signature.category, "ambiguous_commit")
-        self.assertEqual(signature.phase, "observation")
-        self.assertEqual(signature.candidate_changes[0]["implementation"], "confirm_commit")
+        self.assertEqual(signature.evidence, ({"step": 2},))
+        self.assertEqual(signature.causal_chain, ("missed prerequisite",))
+        self.assertEqual(len(requests), 2)
+        self.assertIn("violated the required schema", requests[1][-1]["content"])
+
+    def test_modifier_repairs_invalid_action_list_once(self) -> None:
+        outputs = iter(
+            [
+                ModelOutput(
+                    tool_name=None,
+                    content=(
+                        '{"component_type":"stage","primary_axis":null,'
+                        '"execution_phase":"setup","implementation":"replay",'
+                        '"operation":"add","target_implementation":null,'
+                        '"parameters":{"actions":["open cabinet"]},'
+                        '"rationale":"open prerequisite"}'
+                    ),
+                ),
+                ModelOutput(
+                    tool_name=None,
+                    content=(
+                        '{"component_type":"stage","primary_axis":null,'
+                        '"execution_phase":"setup","implementation":"replay",'
+                        '"operation":"add","target_implementation":null,'
+                        '"parameters":{"actions":[{"tool":"do","arguments":'
+                        '{"command":"open cabinet"}}]},'
+                        '"rationale":"open prerequisite"}'
+                    ),
+                ),
+            ]
+        )
+        requests = []
+
+        def generate(messages, tools):
+            requests.append(list(messages))
+            return next(outputs)
+
+        agent = EnvironmentModificationAgent.from_config(
+            MODIFIER_CONFIG, model=CallableModelClient(generate)
+        )
+        diagnosis = FailureSignature.from_dict(
+            {
+                "category": "missed_precondition",
+                "phase": "setup",
+                "summary": "cabinet stayed closed",
+                "evidence": [{"step": 2}],
+                "confidence": 0.9,
+                "environment_actionable": True,
+                "primary_change": {
+                    "component_type": "stage",
+                    "primary_axis": None,
+                    "execution_phase": "setup",
+                    "implementation": "replay",
+                    "operation": "add",
+                    "parameters": {
+                        "actions": [
+                            {
+                                "tool": "do",
+                                "arguments": {"command": "open cabinet"},
+                            }
+                        ]
+                    },
+                },
+                "causal_chain": ["cabinet stayed closed"],
+                "regression_guards": ["verifier unchanged"],
+            }
+        )
+        surface = MutationSurface(
+            tools=(ToolSemantics("do", "world_state", setup_allowed=True),),
+            supported_phases=("setup",),
+            supported_components=("stage",),
+            supported_contract_axes=(),
+            supported_implementations={"setup": ("replay",)},
+        )
+        mutation = agent.propose(
+            diagnosis,
+            environment_spec={"components": []},
+            surface=surface,
+            catalog=default_mutation_catalog(),
+        )
+        self.assertEqual(mutation.parameters["actions"][0]["tool"], "do")
+        self.assertEqual(len(requests), 2)
+        self.assertIn("action_list", requests[1][-1]["content"])
 
 
 if __name__ == "__main__":

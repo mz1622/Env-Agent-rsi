@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "name": "appworld-interactive-code",
+  "description": "Operate official AppWorld tasks through on-demand API documentation and a stateful Python shell.",
+  "instructions": [
+    "Use get_api_docs to inspect an app's API list and then the exact contract of every unfamiliar API before calling it.",
+    "In execute_python, call APIs as apis.<app_name>.<api_name>(...) and print any value that must be visible in the next turn.",
+    "The Python shell is stateful within one episode, so preserve useful access tokens and intermediate values, but do not assume shell variables survive environment checkpoint restoration.",
+    "Read all required pages or batches before deciding that an item is absent; avoid modifying records until the target identity and requested change are verified.",
+    "Use finish only after the requested database changes are complete. Supply its answer field only when the task asks a question."
+  ]
+}

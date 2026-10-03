@@ -4,7 +4,18 @@
 调用方可从各自模块导入具体角色。
 """
 
-from env_agent_rsi.agent_system.config import AgentConfig, ProviderSettings, load_agent_config
+from env_agent_rsi.agent_system.config import (
+    AgentConfig,
+    MemorySettings,
+    ProviderSettings,
+    load_agent_config,
+)
 from env_agent_rsi.agent_system.context import ConversationContext
 
-__all__ = ["AgentConfig", "ConversationContext", "ProviderSettings", "load_agent_config"]
+__all__ = [
+    "AgentConfig",
+    "ConversationContext",
+    "MemorySettings",
+    "ProviderSettings",
+    "load_agent_config",
+]

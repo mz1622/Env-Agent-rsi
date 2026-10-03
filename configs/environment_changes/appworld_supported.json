@@ -1,0 +1,50 @@
+{
+  "schema_version": 2,
+  "environment": {
+    "type": "appworld_process",
+    "parameters": {
+      "experiment_name": "env_agent_rsi_appworld_mutation",
+      "max_interactions": 40
+    }
+  },
+  "task": {
+    "id": "22cc237_3"
+  },
+  "components": [
+    {
+      "component_type": "stage",
+      "primary_axis": null,
+      "execution_phase": "setup",
+      "type": "replay",
+      "actions": [
+        {"tool": "get_api_docs", "arguments": {"app_name": "supervisor"}}
+      ]
+    },
+    {
+      "component_type": "contract",
+      "primary_axis": "f_A",
+      "execution_phase": "contract",
+      "type": "require_argument",
+      "tool": "get_api_docs",
+      "argument": "app_name",
+      "error_code": "APP_NAME_REQUIRED"
+    },
+    {
+      "component_type": "contract",
+      "primary_axis": "f_A",
+      "execution_phase": "action",
+      "type": "require_argument",
+      "tool": "execute_python",
+      "argument": "code",
+      "error_code": "CODE_REQUIRED"
+    },
+    {
+      "component_type": "extension",
+      "primary_axis": null,
+      "execution_phase": "budget",
+      "type": "step_budget",
+      "max_steps": 40,
+      "write_tools": ["execute_python", "finish"]
+    }
+  ]
+}

@@ -1,5 +1,17 @@
-# Python Package Map
+# Python 包结构
 
-`env_agent_rsi` 是项目的可安装 Python 包。公共链路由 `core` 协议开始，经 `environments`/`benchmarks`、`transforms`、`harness` 进入 `agent_runtime` 与 `agent_system`；`evolution` 保存诊断、变化和环境 DAG。
+```text
+env_agent_rsi/
+├── benchmarks/appworld/     官方 AppWorld 的隔离进程 backend
+├── integrations/agent0/     Agent0 数据、工具、奖励、训练启动薄层
+├── agent_runtime/           通用消息/模型协议
+├── agent_system/            Diagnostic、Modifier 与 JSON memory
+├── core/                    ActionableEnv、descriptor、response
+├── transforms/              六类环境变化机制
+├── harness/                 规则分层、装配、checkpoint
+├── evolution/               diagnosis、mutation、surface、DAG
+└── orchestration/           paired rollout、轨迹与隔离
+```
 
-每个子目录都有自己的 README 和中文文件头设计说明。顶层 `__init__.py` 只导出常用稳定接口；新增具体实现应进入对应子模块，并通过协议或注册表接入。
+依赖从通用协议指向具体适配；`core` 不引用 benchmark。仓库不再含第二套数据集环境、
+verifier 注册表或 hand-written scenario。

@@ -9,9 +9,17 @@ description = "Minimal environment-evolution harness for stateful tool-using age
 requires-python = ">=3.10"
 dependencies = []
 
+[project.optional-dependencies]
+data = ["datasets>=2.13", "pyarrow>=12"]
+test = ["pytest>=7"]
+
 [project.scripts]
-env-agent-rsi-demo = "env_agent_rsi.demo:main"
-env-agent-rsi-task = "env_agent_rsi.run_task:main"
+env-agent-rsi-agent0-data = "env_agent_rsi.integrations.agent0.dataset:main"
+env-agent-rsi-agent0-server = "env_agent_rsi.integrations.agent0.tool_server:main"
+env-agent-rsi-agent0-train = "env_agent_rsi.integrations.agent0.training:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

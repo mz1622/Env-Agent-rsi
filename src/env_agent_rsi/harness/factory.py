@@ -1,8 +1,7 @@
-"""配置到运行环境的装配工厂。
+"""AppWorld 配置到环境 Harness 的装配工厂。
 
-本模块维护环境、verifier 与 Setup/Contract/f_A/f_T/f_O/Budget 六类变化的显式
-注册表，根据 task.json 构建完整 RuleHarness。新增组件通过注册函数接入，runner 不
-需要出现业务分支。
+仓库只保留 AppWorld 数据接口。六类环境变化仍由独立注册表装配，因此诊断与修改
+模块不依赖具体 benchmark；AppWorld 官方 evaluator 则留在进程隔离的 backend 内。
 """
 
 from __future__ import annotations
@@ -13,15 +12,10 @@ from typing import Any, Mapping
 
 from env_agent_rsi.core.protocol import Action, ActionableEnv
 from env_agent_rsi.core.registry import Builder, ComponentRegistry
-from env_agent_rsi.core.verifier import StateVerifier
-from env_agent_rsi.environments import (
-    CalendarEmailEnv,
-    CodeRepairEnv,
-    IssueWorkflowEnv,
-    OrderLifecycleEnv,
-)
+from env_agent_rsi.benchmarks import AppWorldProcessBackend, BenchmarkAdapter
+from env_agent_rsi.evolution.materializer import canonicalize_environment_spec
+from env_agent_rsi.evolution.mutation import PHASE_CLASSIFICATION
 from env_agent_rsi.harness.wrapper import RuleHarness
-from env_agent_rsi.micro_api.item_env import ItemEnv
 from env_agent_rsi.transforms import (
     ActionRule,
     BudgetRule,
@@ -32,21 +26,14 @@ from env_agent_rsi.transforms import (
     RequireArgumentContractRule,
     RequireArgumentRule,
     SetupRule,
+    StaleFieldAfterActionRule,
     StaleReadAfterWriteRule,
     StepBudgetRule,
     TransitionRule,
 )
-from env_agent_rsi.verifiers import (
-    CalendarEmailGoalVerifier,
-    CodeRepairGoalVerifier,
-    ExactlyOnceVerifier,
-    IssueGoalVerifier,
-    OrderGoalVerifier,
-)
 
 
 ENVIRONMENTS = ComponentRegistry[ActionableEnv]("environment")
-VERIFIERS = ComponentRegistry[StateVerifier]("verifier")
 SETUP_RULES = ComponentRegistry[SetupRule]("setup rule")
 ACTION_RULES = ComponentRegistry[ActionRule]("action rule")
 CONTRACT_RULES = ComponentRegistry[ContractRule]("contract rule")
@@ -57,10 +44,6 @@ BUDGET_RULES = ComponentRegistry[BudgetRule]("budget rule")
 
 def register_environment(name: str, builder: Builder[ActionableEnv]) -> None:
     ENVIRONMENTS.register(name, builder)
-
-
-def register_verifier(name: str, builder: Builder[StateVerifier]) -> None:
-    VERIFIERS.register(name, builder)
 
 
 def register_setup_rule(name: str, builder: Builder[SetupRule]) -> None:
@@ -96,11 +79,11 @@ def load_spec(path: str | Path) -> dict[str, Any]:
 
 
 def build_environment(spec: Mapping[str, Any]) -> RuleHarness:
-    environment_spec = dict(spec.get("environment", {"type": "item"}))
-    environment_type = str(environment_spec.get("type", "item"))
+    environment_spec = dict(spec.get("environment", {}))
+    environment_type = str(environment_spec.get("type", "appworld_process"))
     base = ENVIRONMENTS.build(environment_type, spec)
 
-    rules = dict(spec.get("rules", {}))
+    rules = _rules_by_execution_phase(spec)
     setup_rules = _build_rules(SETUP_RULES, rules.get("setup", []))
     contract_rules = _build_rules(CONTRACT_RULES, rules.get("contract", []))
     action_rules = _build_rules(ACTION_RULES, rules.get("action", []))
@@ -115,13 +98,54 @@ def build_environment(spec: Mapping[str, Any]) -> RuleHarness:
         transition_rules=transition_rules,
         observation_rules=observation_rules,
         budget_rules=budget_rules,
+        environment_spec=canonicalize_environment_spec(spec),
     )
+
+
+def _rules_by_execution_phase(spec: Mapping[str, Any]) -> dict[str, list[Any]]:
+    """统一读取新 components 格式和旧 rules 格式。"""
+
+    if "components" not in spec:
+        raw = spec.get("rules", {})
+        if not isinstance(raw, Mapping):
+            raise ValueError("environment rules must be an object")
+        return {phase: list(raw.get(phase, [])) for phase in (
+            "setup", "contract", "action", "transition", "observation", "budget"
+        )}
+
+    components = spec.get("components")
+    if not isinstance(components, list):
+        raise ValueError("environment components must be a list")
+    grouped = {
+        phase: []
+        for phase in (
+            "setup", "contract", "action", "transition", "observation", "budget"
+        )
+    }
+    for index, component in enumerate(components):
+        if not isinstance(component, Mapping):
+            raise ValueError(f"environment component {index} must be an object")
+        phase = str(component.get("execution_phase", ""))
+        if phase not in grouped:
+            raise ValueError(
+                f"environment component {index} has unsupported execution_phase {phase!r}"
+            )
+        expected_type, expected_axis = PHASE_CLASSIFICATION[phase]
+        actual_type = component.get("component_type")
+        actual_axis = component.get("primary_axis")
+        if actual_type != expected_type or actual_axis != expected_axis:
+            raise ValueError(
+                f"environment component {index} classification conflicts with "
+                f"execution_phase {phase!r}: expected "
+                f"{(expected_type, expected_axis)!r}"
+            )
+        grouped[phase].append(dict(component))
+    return grouped
 
 
 def available_components() -> dict[str, tuple[str, ...]]:
     return {
         "environments": ENVIRONMENTS.names(),
-        "verifiers": VERIFIERS.names(),
         "setup_rules": SETUP_RULES.names(),
         "contract_rules": CONTRACT_RULES.names(),
         "action_rules": ACTION_RULES.names(),
@@ -143,69 +167,25 @@ def _build_rules(registry: ComponentRegistry[Any], specs: Any) -> list[Any]:
     return built
 
 
-def _build_item(spec: Mapping[str, Any]) -> ItemEnv:
+def _build_appworld(spec: Mapping[str, Any]) -> BenchmarkAdapter:
+    """从官方本地 bundle 构建进程隔离的 AppWorld Train 环境。"""
+
     task = dict(spec.get("task", {}))
     environment = dict(spec.get("environment", {}))
     parameters = dict(environment.get("parameters", {}))
-    verifier = dict(spec.get("verifier", {"type": "exactly_once"}))
-    verifier_type = str(verifier.get("type", "exactly_once"))
-    return ItemEnv(
-        target_value=str(task.get("target_value", "target-item")),
-        page_size=int(parameters.get("page_size", task.get("page_size", 2))),
-        verifier=VERIFIERS.build(verifier_type, verifier),
+    task_id = str(task.get("id", ""))
+    return BenchmarkAdapter(
+        AppWorldProcessBackend(
+            task_id=task_id,
+            appworld_root=parameters.get("appworld_root"),
+            python_executable=parameters.get("python_executable"),
+            experiment_name=str(
+                parameters.get("experiment_name", "env_agent_rsi_appworld")
+            ),
+            max_interactions=int(parameters.get("max_interactions", 40)),
+            request_timeout=float(parameters.get("request_timeout", 120.0)),
+        )
     )
-
-
-def _task_and_verifier(
-    spec: Mapping[str, Any], default_task_id: str, default_verifier: str
-) -> tuple[dict[str, Any], StateVerifier]:
-    task = dict(spec.get("task", {}))
-    verifier_spec = dict(spec.get("verifier", {"type": default_verifier}))
-    verifier_type = str(verifier_spec.get("type", default_verifier))
-    task.setdefault("id", default_task_id)
-    return task, VERIFIERS.build(verifier_type, verifier_spec)
-
-
-def _build_order_lifecycle(spec: Mapping[str, Any]) -> OrderLifecycleEnv:
-    task, verifier = _task_and_verifier(
-        spec, "tau_retail_adapted_66", "order_goal_state"
-    )
-    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
-    if "instruction" in task:
-        kwargs["instruction"] = str(task["instruction"])
-    return OrderLifecycleEnv(**kwargs)
-
-
-def _build_issue_workflow(spec: Mapping[str, Any]) -> IssueWorkflowEnv:
-    task, verifier = _task_and_verifier(
-        spec, "webarena_verified_adapted_446", "issue_goal_state"
-    )
-    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
-    if "instruction" in task:
-        kwargs["instruction"] = str(task["instruction"])
-    return IssueWorkflowEnv(**kwargs)
-
-
-def _build_calendar_email(spec: Mapping[str, Any]) -> CalendarEmailEnv:
-    task, verifier = _task_and_verifier(
-        spec, "workbench_multidomain_adapted_151", "calendar_email_goal_state"
-    )
-    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
-    if "instruction" in task:
-        kwargs["instruction"] = str(task["instruction"])
-    return CalendarEmailEnv(**kwargs)
-
-
-def _build_code_repair(spec: Mapping[str, Any]) -> CodeRepairEnv:
-    task, verifier = _task_and_verifier(
-        spec,
-        "swebench_lite_adapted_astropy_14365",
-        "test_patch_verifier",
-    )
-    kwargs: dict[str, Any] = {"verifier": verifier, "task_id": str(task["id"])}
-    if "instruction" in task:
-        kwargs["instruction"] = str(task["instruction"])
-    return CodeRepairEnv(**kwargs)
 
 
 def _build_require_argument(config: Mapping[str, Any]) -> RequireArgumentRule:
@@ -258,6 +238,15 @@ def _build_stale_read(config: Mapping[str, Any]) -> StaleReadAfterWriteRule:
     return StaleReadAfterWriteRule(stale_reads=int(config.get("stale_reads", 1)))
 
 
+def _build_stale_field(config: Mapping[str, Any]) -> StaleFieldAfterActionRule:
+    return StaleFieldAfterActionRule(
+        trigger_tool=str(config["trigger_tool"]),
+        state_key=str(config["state_key"]),
+        observation_key=str(config["observation_key"]),
+        stale_reads=int(config.get("stale_reads", 1)),
+    )
+
+
 def _build_step_budget(config: Mapping[str, Any]) -> StepBudgetRule:
     write_tools = config.get("write_tools", [])
     if not isinstance(write_tools, list):
@@ -270,19 +259,11 @@ def _build_step_budget(config: Mapping[str, Any]) -> StepBudgetRule:
     )
 
 
-register_environment("item", _build_item)
-register_environment("order_api", _build_order_lifecycle)
-register_environment("issue_tracker", _build_issue_workflow)
-register_environment("workplace_apps", _build_calendar_email)
-register_environment("code_repository", _build_code_repair)
-register_verifier("exactly_once", lambda _: ExactlyOnceVerifier())
-register_verifier("order_goal_state", lambda _: OrderGoalVerifier())
-register_verifier("issue_goal_state", lambda _: IssueGoalVerifier())
-register_verifier("calendar_email_goal_state", lambda _: CalendarEmailGoalVerifier())
-register_verifier("test_patch_verifier", lambda _: CodeRepairGoalVerifier())
+register_environment("appworld_process", _build_appworld)
 register_setup_rule("replay", _build_replay_setup)
 register_contract_rule("require_argument", _build_require_argument_contract)
 register_action_rule("require_argument", _build_require_argument)
 register_transition_rule("post_commit_timeout", _build_post_commit_timeout)
 register_observation_rule("stale_read_after_write", _build_stale_read)
+register_observation_rule("stale_field_after_action", _build_stale_field)
 register_budget_rule("step_budget", _build_step_budget)

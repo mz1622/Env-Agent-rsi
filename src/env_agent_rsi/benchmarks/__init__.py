@@ -5,5 +5,11 @@ from env_agent_rsi.benchmarks.adapter import (
     BenchmarkBackend,
     BenchmarkTask,
 )
+from env_agent_rsi.benchmarks.appworld import AppWorldProcessBackend
 
-__all__ = ["BenchmarkAdapter", "BenchmarkBackend", "BenchmarkTask"]
+__all__ = [
+    "AppWorldProcessBackend",
+    "BenchmarkAdapter",
+    "BenchmarkBackend",
+    "BenchmarkTask",
+]

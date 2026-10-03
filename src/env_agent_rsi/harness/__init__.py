@@ -1,7 +1,7 @@
-"""环境 Harness 的公共入口。
+"""AppWorld 环境 Harness 的公共入口。
 
-向外提供配置加载、组件注册、环境装配和 RuleHarness；具体场景代码只需实现协议并
-注册，不应修改 Agent runner。
+向外提供配置加载、环境与六类规则注册、装配和 checkpoint；任务评分由 AppWorld
+backend 的官方 evaluator 负责，不再维护一套按数据集注册的 verifier。
 """
 
 from .factory import (
@@ -15,12 +15,26 @@ from .factory import (
     register_observation_rule,
     register_setup_rule,
     register_transition_rule,
-    register_verifier,
 )
 from .wrapper import RuleHarness
+from .layers import HarnessLayer, RuleLayer
+from .checkpoint import (
+    EnvironmentCheckpoint,
+    build_stack,
+    dump_stack,
+    load_checkpoint,
+    save_checkpoint,
+)
 
 __all__ = [
     "RuleHarness",
+    "HarnessLayer",
+    "RuleLayer",
+    "EnvironmentCheckpoint",
+    "build_stack",
+    "dump_stack",
+    "load_checkpoint",
+    "save_checkpoint",
     "available_components",
     "build_environment",
     "load_spec",
@@ -31,5 +45,4 @@ __all__ = [
     "register_observation_rule",
     "register_setup_rule",
     "register_transition_rule",
-    "register_verifier",
 ]

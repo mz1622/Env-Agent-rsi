@@ -103,3 +103,8 @@ class ActionableEnv(Protocol):
 
     def load_state(self, snapshot: Mapping[str, Any]) -> None:
         ...
+
+    def notify_replay_complete(self) -> None:
+        """通知环境 Setup 已结束，应保留世界状态并重置 episode 计数。"""
+
+        ...

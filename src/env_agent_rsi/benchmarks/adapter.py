@@ -117,5 +117,12 @@ class BenchmarkAdapter:
     def load_state(self, snapshot: Mapping[str, Any]) -> None:
         self.backend.load_state(deepcopy(dict(snapshot)))
 
+    def notify_replay_complete(self) -> None:
+        """把可选 replay 通知转发给支持该协议的 benchmark。"""
+
+        notify = getattr(self.backend, "notify_replay_complete", None)
+        if callable(notify):
+            notify()
+
     def mutation_surface(self) -> MutationSurface:
         return self.backend.mutation_surface()

@@ -1,10 +1,11 @@
 # Agent System
 
-该目录实现两个职责严格分开的 Agent：
+当前环境进化侧有两个配置驱动角色：
 
-- `TargetAgent` 只执行 benchmark 任务，是环境变化希望帮助的对象。
-- `DiagnosticAgent` 只分析 episode 轨迹和 verifier 结果，输出失败签名与候选变化，不拥有环境写权限，也不能改判成功。
+- `DiagnosticAgent` 从失败 episode 中选一个最高优先级、可证伪的根因；
+- `EnvironmentModificationAgent` 把该根因翻译为一个通过 catalog 与 `MutationSurface` 校验的
+  `MutationSpec`。
 
-两者都由同一个 `AgentConfig` 装配。`system_prompt` 和 `skills` 是 JSON 文件路径；模型差异放在 `provider.type/model/args`。`ConversationContext` 固定保留系统信息和原始任务，并以 assistant tool call + tool result 为完整轮次维护历史，支持真正的多轮工具任务。
-
-环境、Agent 和 provider 三者没有相互硬编码：Target 只依赖 `ActionableEnv`，Diagnostic 只依赖 `EpisodeResult`，两者都只依赖 `ModelClient`。
+两者不能改 task、官方 evaluator 或 Target 权重。system prompt、skills、只读 memory 和
+provider 参数都从 JSON 加载。`TargetAgent` 通用类仍保留给轻量审计，但 AppWorld 训练基线
+已经使用 Agent0 的 rollout manager 和 Qwen3-4B，不再维护专用 Target 配置。

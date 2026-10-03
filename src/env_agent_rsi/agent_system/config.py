@@ -1,7 +1,7 @@
-"""Target/Diagnostic Agent 的统一 JSON 配置模型。
+"""Target/Diagnostic/Modifier Agent 的统一 JSON 配置模型。
 
-Agent 结构只读取同一组参数：角色、提示词、skills、上下文上限和 provider；provider
-自身的差异全部进入 args，并由独立工厂解释。
+Agent 结构只读取同一组参数：角色、提示词、skills、只读 memory、上下文上限和
+provider；provider 自身的差异全部进入 args，并由独立工厂解释。
 """
 
 from __future__ import annotations
@@ -20,7 +20,17 @@ class ProviderSettings:
     args: Mapping[str, Any] = field(default_factory=dict)
     base_url: str | None = None
     api_key_env: str | None = None
+    api_key_file: Path | None = None
     executor: str | None = None
+
+
+@dataclass(frozen=True)
+class MemorySettings:
+    """Agent 长期记忆的只读检索配置。"""
+
+    type: str = "null"
+    path: Path | None = None
+    top_k: int = 0
 
 
 @dataclass(frozen=True)
@@ -29,6 +39,7 @@ class AgentConfig:
     role: str
     system_prompt: Path
     skills: tuple[Path, ...]
+    memory: MemorySettings
     provider: ProviderSettings
     max_steps: int = 30
     max_context_messages: int = 80
@@ -62,11 +73,32 @@ def load_agent_config(
         isinstance(item, str) for item in skill_values
     ):
         raise ValueError("agent skills must be a list of paths")
+    memory_value = value.get("memory", {"type": "null", "top_k": 0})
+    if not isinstance(memory_value, Mapping):
+        raise ValueError("agent memory must be a JSON object")
+    memory_type = str(memory_value.get("type", "null"))
+    if memory_type not in {"null", "json"}:
+        raise ValueError("agent memory type must be 'null' or 'json'")
+    memory_path_value = memory_value.get("path")
+    if memory_type == "json" and not isinstance(memory_path_value, str):
+        raise ValueError("json agent memory requires a path")
+    memory_top_k = int(memory_value.get("top_k", 0))
+    if memory_top_k < 0:
+        raise ValueError("agent memory top_k must be non-negative")
     return AgentConfig(
         name=str(value.get("name", config_path.stem)),
         role=str(value.get("role", "target")),
         system_prompt=(root / prompt_value).resolve(),
         skills=tuple((root / item).resolve() for item in skill_values),
+        memory=MemorySettings(
+            type=memory_type,
+            path=(
+                (root / memory_path_value).resolve()
+                if isinstance(memory_path_value, str)
+                else None
+            ),
+            top_k=memory_top_k,
+        ),
         provider=ProviderSettings(
             type=str(merged.get("type", "api")),
             model=str(merged.get("model", "")),
@@ -74,6 +106,11 @@ def load_agent_config(
             base_url=(str(merged["base_url"]) if merged.get("base_url") else None),
             api_key_env=(
                 str(merged["api_key_env"]) if merged.get("api_key_env") else None
+            ),
+            api_key_file=(
+                (root / str(merged["api_key_file"])).resolve()
+                if merged.get("api_key_file")
+                else None
             ),
             executor=(str(merged["executor"]) if merged.get("executor") else None),
         ),

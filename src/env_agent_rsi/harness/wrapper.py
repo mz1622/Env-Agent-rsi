@@ -21,6 +21,7 @@ from env_agent_rsi.core.protocol import (
     JsonObject,
 )
 from env_agent_rsi.core.tooling import ActionValidationError, validate_action
+from env_agent_rsi.harness.layers import RuleLayer
 from env_agent_rsi.transforms.protocols import (
     ActionRule,
     BudgetRule,
@@ -45,6 +46,7 @@ class RuleHarness:
         contract_rules: Sequence[ContractRule] = (),
         setup_rules: Sequence[SetupRule] = (),
         budget_rules: Sequence[BudgetRule] = (),
+        environment_spec: Mapping[str, Any] | None = None,
     ):
         self.base = base
         self.setup_rules = list(setup_rules)
@@ -53,6 +55,23 @@ class RuleHarness:
         self.transition_rules = list(transition_rules)
         self.observation_rules = list(observation_rules)
         self.budget_rules = list(budget_rules)
+        self.environment_spec = deepcopy(dict(environment_spec or {}))
+        self.layers = self._make_layers()
+
+    def _make_layers(self) -> tuple[RuleLayer, ...]:
+        groups = (
+            ("stage", None, "setup", self.setup_rules),
+            ("contract", "f_A", "contract", self.contract_rules),
+            ("contract", "f_A", "action", self.action_rules),
+            ("contract", "f_T", "transition", self.transition_rules),
+            ("contract", "f_O", "observation", self.observation_rules),
+            ("extension", None, "budget", self.budget_rules),
+        )
+        return tuple(
+            RuleLayer(component_type, primary_axis, phase, rule.name, ordinal, rule)
+            for component_type, primary_axis, phase, rules in groups
+            for ordinal, rule in enumerate(rules)
+        )
 
     def reset(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
@@ -98,6 +117,12 @@ class RuleHarness:
                     raise ValueError(
                         f"setup action {rule.name}[{index}] ended the episode"
                     )
+
+        if setup_trace:
+            notify = getattr(self.base, "notify_replay_complete", None)
+            if callable(notify):
+                notify()
+            setup_observation = {"ok": True, **self.base.observe()}
 
         # Setup 只塑造基础状态，不应消耗随后交互规则的内部计数和预算。
         for rule in [
@@ -220,6 +245,13 @@ class RuleHarness:
     def get_env_state(self) -> JsonObject:
         return self.base.get_env_state()
 
+    def notify_replay_complete(self) -> None:
+        """当外层 Stage 包装当前 Harness 时继续转发 replay 边界。"""
+
+        notify = getattr(self.base, "notify_replay_complete", None)
+        if callable(notify):
+            notify()
+
     def save_state(self) -> JsonObject:
         return {
             "snapshot_version": self.SNAPSHOT_VERSION,
@@ -249,6 +281,43 @@ class RuleHarness:
                 for rule in self.budget_rules
             ],
         }
+
+    def layer_snapshots(self) -> list[JsonObject]:
+        """按真实执行顺序导出每个层自己的运行时状态。"""
+
+        return [layer.to_snapshot() for layer in self.layers]
+
+    def load_layer_snapshots(self, layers: Sequence[Mapping[str, Any]]) -> None:
+        """从分层 checkpoint 恢复，不允许层类型或顺序悄然漂移。"""
+
+        expected = self.layer_snapshots()
+        if len(expected) != len(layers):
+            raise ValueError(
+                f"layer count mismatch: expected {len(expected)}, got {len(layers)}"
+            )
+        for layer, wanted, actual in zip(self.layers, expected, layers):
+            identity = (
+                actual.get("component_type"),
+                actual.get("primary_axis"),
+                actual.get("execution_phase"),
+                actual.get("implementation"),
+                actual.get("ordinal"),
+            )
+            expected_identity = (
+                wanted["component_type"],
+                wanted["primary_axis"],
+                wanted["execution_phase"],
+                wanted["implementation"],
+                wanted["ordinal"],
+            )
+            if identity != expected_identity:
+                raise ValueError(
+                    f"layer mismatch: expected {expected_identity!r}, got {identity!r}"
+                )
+            state = actual.get("state", {})
+            if not isinstance(state, Mapping):
+                raise ValueError("layer state must be an object")
+            layer.load_state(state)
 
     def load_state(self, snapshot: Mapping[str, Any]) -> None:
         if snapshot.get("snapshot_version") != self.SNAPSHOT_VERSION:

@@ -6,6 +6,7 @@
 
 from .agent_runtime import AgentRunner, ModelClient, ModelOutput
 from .agent_system.diagnostic import DiagnosticAgent
+from .agent_system.modifier import EnvironmentModificationAgent
 from .agent_system.target import TargetAgent
 from .benchmarks import BenchmarkAdapter, BenchmarkTask
 from .core.protocol import (
@@ -17,6 +18,7 @@ from .core.protocol import (
 )
 from .harness.factory import build_environment, load_spec
 from .evolution import EnvironmentDAG, FailureSignature, MutationSpec, MutationSurface
+from .orchestration import PairedRolloutEvaluator, TraceStore
 
 __all__ = [
     "Action",
@@ -29,11 +31,14 @@ __all__ = [
     "EnvResponse",
     "EvaluationResult",
     "EnvironmentDAG",
+    "EnvironmentModificationAgent",
     "FailureSignature",
     "ModelClient",
     "ModelOutput",
     "MutationSpec",
     "MutationSurface",
+    "PairedRolloutEvaluator",
+    "TraceStore",
     "TargetAgent",
     "build_environment",
     "load_spec",

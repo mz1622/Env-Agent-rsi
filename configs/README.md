@@ -1,5 +1,11 @@
-# Configuration Catalog
+# 配置目录
 
-配置按职责分开：`agents/` 选择角色与 provider，`prompts/` 保存 system prompt，`skills/` 保存可复用策略，`environment_changes/` 展示六阶段变化，`micro_api/` 保存最小环境基线与故障组合。
+当前配置只指向 AppWorld：
 
-所有配置均为 JSON；路径类字段相对其所属 Agent 配置解析。密钥、token 和 verifier 私有状态不得写入该目录。
+- `agent0/`：Qwen3-4B、Agent0 ADPO、parquet 与工具服务参数；
+- `agents/`：环境侧 Diagnostic/Modifier 的模型配置；
+- `benchmarks/`：AppWorld 官方 revision、数据版本和本地布局；
+- `environment_changes/`：AppWorld 当前支持的环境变化组合；
+- `prompts/`、`skills/`、`memory/`：提示、工具策略和只读 memory 接口。
+
+任务正文、数据库、ground truth、生成后的 parquet 与密钥不进入配置目录。

@@ -24,8 +24,9 @@ def build_model_client(
     if settings.type == "api":
         return APIModelClient(
             model=settings.model,
-            base_url=settings.base_url or "https://api.openai.com/v1",
-            api_key_env=settings.api_key_env or "OPENAI_API_KEY",
+            base_url=settings.base_url or "https://api.deepseek.com",
+            api_key_env=settings.api_key_env or "DEEPSEEK_API_KEY",
+            api_key_file=settings.api_key_file or "api.txt",
             args=args,
         )
     if settings.type == "adk":

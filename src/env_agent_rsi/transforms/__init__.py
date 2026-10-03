@@ -8,6 +8,7 @@ from .action import RequireArgumentRule
 from .budget import StepBudgetRule
 from .contract import RequireArgumentContractRule
 from .observation import StaleReadAfterWriteRule
+from .stale_field import StaleFieldAfterActionRule
 from .protocols import (
     ActionDecision,
     ActionRule,
@@ -32,6 +33,7 @@ __all__ = [
     "RequireArgumentContractRule",
     "SetupRule",
     "StaleReadAfterWriteRule",
+    "StaleFieldAfterActionRule",
     "StepBudgetRule",
     "TransitionRule",
 ]

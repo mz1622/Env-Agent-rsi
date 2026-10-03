@@ -13,6 +13,11 @@ from typing import Any, Mapping
 
 from env_agent_rsi.agent_runtime.model import ModelClient
 from env_agent_rsi.agent_system.context import ConversationContext
+from env_agent_rsi.agent_system.memory import (
+    MemoryQuery,
+    MemoryRetriever,
+    NullMemoryRetriever,
+)
 from env_agent_rsi.core.protocol import (
     Action,
     ActionableEnv,
@@ -60,6 +65,8 @@ class AgentRunner:
         skill_texts: tuple[str, ...] | list[str] = (),
         max_steps: int = 30,
         max_context_messages: int = 80,
+        memory_retriever: MemoryRetriever | None = None,
+        memory_top_k: int = 0,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps must be positive")
@@ -69,6 +76,10 @@ class AgentRunner:
         self.skill_texts = tuple(skill_texts)
         self.max_steps = max_steps
         self.max_context_messages = max_context_messages
+        self.memory_retriever = memory_retriever or NullMemoryRetriever()
+        if memory_top_k < 0:
+            raise ValueError("memory_top_k must be non-negative")
+        self.memory_top_k = memory_top_k
 
     def run(
         self, seed: int = 0, options: Mapping[str, Any] | None = None
@@ -80,11 +91,21 @@ class AgentRunner:
             self.skill_texts,
             max_messages=self.max_context_messages,
         )
+        initial_observation = _without_contract(reset_response.observation)
+        retrieved_memory = self.memory_retriever.retrieve(
+            MemoryQuery(
+                task_id=descriptor.task_id,
+                instruction=descriptor.instruction,
+                initial_observation=initial_observation,
+            ),
+            limit=self.memory_top_k,
+        )
         context.start_task(
             {
                 "task_id": descriptor.task_id,
                 "task": descriptor.instruction,
-                "initial_observation": _without_contract(reset_response.observation),
+                "retrieved_memory": list(retrieved_memory),
+                "initial_observation": initial_observation,
             }
         )
         trace: list[JsonObject] = []

@@ -1,7 +1,8 @@
 """支持连续多轮工具调用的 Agent 上下文。
 
-上下文始终保留 system、skills 和初始任务；后续按 assistant tool-call 与 tool result
-成对追加。超过上限时只从最旧的完整交互轮开始裁剪，避免留下孤立 tool 消息。
+上下文始终保留 system、可信 Skill Register 和初始任务；检索到的 Memory 作为初始
+user payload 中的低权限数据进入，Tool Register 则通过模型 API 的 tools 参数独立传递。
+后续按 assistant tool-call 与 tool result 成对追加，裁剪时不留下孤立 tool 消息。
 """
 
 from __future__ import annotations
@@ -27,7 +28,9 @@ class ConversationContext:
         if max_messages < 4:
             raise ValueError("max_messages must be at least 4")
         sections = [system_prompt.strip()]
-        sections.extend(text.strip() for text in skill_texts if text.strip())
+        rendered_skills = [text.strip() for text in skill_texts if text.strip()]
+        if rendered_skills:
+            sections.append("[Skill Register]\n" + "\n\n".join(rendered_skills))
         self.max_messages = max_messages
         self._messages: list[JsonObject] = [
             {"role": "system", "content": "\n\n".join(sections)}

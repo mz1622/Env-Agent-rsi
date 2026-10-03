@@ -6,9 +6,7 @@ benchmark 可通过 adapter 运行，Setup 不消耗正式预算。
 
 from __future__ import annotations
 
-from copy import deepcopy
 import unittest
-from pathlib import Path
 from typing import Any, Mapping
 
 from env_agent_rsi.benchmarks import BenchmarkAdapter, BenchmarkTask
@@ -20,12 +18,11 @@ from env_agent_rsi.evolution import (
     MutationSpec,
     MutationSurface,
     ToolSemantics,
+    default_mutation_catalog,
+    materialize_environment_spec,
 )
-from env_agent_rsi.harness.factory import build_environment, load_spec
-
-
-ROOT = Path(__file__).resolve().parents[1]
-ALL_SIX = ROOT / "configs/environment_changes/all_six.json"
+from env_agent_rsi.harness.wrapper import RuleHarness
+from env_agent_rsi.transforms import ReplaySetupRule, StepBudgetRule
 
 
 class FakeBenchmarkBackend:
@@ -79,13 +76,88 @@ class FakeBenchmarkBackend:
 
 
 class MutationAndLineageTests(unittest.TestCase):
-    def test_all_six_mutation_phases_have_stable_ids(self) -> None:
+    def test_six_mutation_phases_have_stable_ids(self) -> None:
         for phase in MUTATION_PHASES:
             first = MutationSpec(phase, "example", {"amount": 1})
             second = MutationSpec.from_dict(first.to_dict())
             self.assertEqual(first.digest, second.digest)
         with self.assertRaises(ValueError):
             MutationSpec("agent", "rewrite-policy")
+
+    def test_surface_rejects_unknown_implementation_and_parameters(self) -> None:
+        surface = MutationSurface(
+            tools=(ToolSemantics("append_item", "write"),),
+        )
+        catalog = default_mutation_catalog()
+        with self.assertRaises(ValueError):
+            surface.validate(
+                MutationSpec("observation", "confirm_commit"),
+                catalog,
+            )
+        with self.assertRaises(ValueError):
+            surface.validate(
+                MutationSpec(
+                    "contract",
+                    "require_argument",
+                    {"tool": "missing_tool", "argument": "key"},
+                ),
+                catalog,
+            )
+
+    def test_materializer_add_replace_remove_preserves_appworld_task(self) -> None:
+        parent = {
+            "schema_version": 1,
+            "environment": {"type": "appworld_process"},
+            "task": {"id": "22cc237_3"},
+            "rules": {"contract": []},
+        }
+        surface = MutationSurface(
+            tools=(ToolSemantics("execute_python", "world_state"),),
+        )
+        catalog = default_mutation_catalog()
+        added = materialize_environment_spec(
+            parent,
+            MutationSpec(
+                "contract",
+                "require_argument",
+                {"tool": "execute_python", "argument": "code"},
+            ),
+            surface=surface,
+            catalog=catalog,
+        )
+        self.assertEqual(parent["rules"]["contract"], [])
+        self.assertEqual(added["task"], parent["task"])
+        self.assertNotIn("rules", added)
+        self.assertEqual(added["components"][0]["component_type"], "contract")
+        self.assertEqual(added["components"][0]["primary_axis"], "f_A")
+        self.assertEqual(added["components"][0]["type"], "require_argument")
+
+        replaced = materialize_environment_spec(
+            added,
+            MutationSpec(
+                "contract",
+                "require_argument",
+                {"tool": "execute_python", "argument": "timeout"},
+                operation="replace",
+                target_implementation="require_argument",
+            ),
+            surface=surface,
+            catalog=catalog,
+        )
+        self.assertEqual(replaced["components"][0]["argument"], "timeout")
+
+        removed = materialize_environment_spec(
+            replaced,
+            MutationSpec(
+                "contract",
+                "require_argument",
+                {},
+                operation="remove",
+            ),
+            surface=surface,
+            catalog=catalog,
+        )
+        self.assertEqual(removed["components"], [])
 
     def test_dag_merges_equivalent_child_from_multiple_parents(self) -> None:
         dag = EnvironmentDAG()
@@ -102,14 +174,16 @@ class MutationAndLineageTests(unittest.TestCase):
 
 class HarnessAndAdapterTests(unittest.TestCase):
     def test_setup_runs_before_agent_and_does_not_consume_budget(self) -> None:
-        spec = load_spec(ALL_SIX)
-        spec = deepcopy(spec)
-        spec["rules"]["budget"][0]["max_steps"] = 1
-        env = build_environment(spec)
+        backend = FakeBenchmarkBackend()
+        env = RuleHarness(
+            BenchmarkAdapter(backend),
+            setup_rules=[ReplaySetupRule([Action("increment", {})])],
+            budget_rules=[StepBudgetRule(max_steps=1)],
+        )
         reset = env.reset(seed=0)
         self.assertEqual(len(reset.info["setup_trace"]), 1)
-        self.assertEqual(env.get_env_state()["step_count"], 1)
-        response = env.step(Action("list_items", {"cursor": 0, "limit": 2}))
+        self.assertEqual(backend.value, 1)
+        response = env.step(Action("increment", {}))
         self.assertTrue(response.truncated)
         self.assertEqual(response.observation["budget"]["steps_used"], 1)
         self.assertEqual(
