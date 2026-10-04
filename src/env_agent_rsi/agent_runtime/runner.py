@@ -96,8 +96,15 @@ class AgentRunner:
 
         for step_index in range(1, self.max_steps + 1):
             context.bind_tools(descriptor.tools)
-            output = self.model.generate(context.for_model(), ())
+            provider_tools = (
+                descriptor.tools
+                if getattr(self.model, "native_tool_transport", False)
+                else ()
+            )
+            output = self.model.generate(context.for_model(), provider_tools)
             if output.tool_name is None:
+                # 无合法动作时的最后输出是诊断“为什么停止”的关键证据。
+                context.append_assistant(output)
                 stopped_reason = "model_finished"
                 break
             output = _as_agent0_action(output)

@@ -17,6 +17,7 @@ from env_agent_rsi.evolution.materializer import canonicalize_environment_spec
 from env_agent_rsi.evolution.mutation import PHASE_CLASSIFICATION
 from env_agent_rsi.harness.wrapper import RuleHarness
 from env_agent_rsi.transforms import (
+    AddToolGuidanceContractRule,
     ActionRule,
     BudgetRule,
     ContractRule,
@@ -225,6 +226,15 @@ def _build_require_argument_contract(
     )
 
 
+def _build_add_tool_guidance(
+    config: Mapping[str, Any],
+) -> AddToolGuidanceContractRule:
+    return AddToolGuidanceContractRule(
+        tool=str(config["tool"]),
+        guidance=str(config["guidance"]),
+    )
+
+
 def _build_post_commit_timeout(
     config: Mapping[str, Any],
 ) -> PostCommitTimeoutRule:
@@ -262,6 +272,7 @@ def _build_step_budget(config: Mapping[str, Any]) -> StepBudgetRule:
 register_environment("appworld_process", _build_appworld)
 register_setup_rule("replay", _build_replay_setup)
 register_contract_rule("require_argument", _build_require_argument_contract)
+register_contract_rule("add_tool_guidance", _build_add_tool_guidance)
 register_action_rule("require_argument", _build_require_argument)
 register_transition_rule("post_commit_timeout", _build_post_commit_timeout)
 register_observation_rule("stale_read_after_write", _build_stale_read)

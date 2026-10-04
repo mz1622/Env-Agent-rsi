@@ -12,6 +12,7 @@ from env_agent_rsi.agent_runtime.model import ModelClient
 from env_agent_rsi.agent_system.config import ProviderSettings
 from env_agent_rsi.agent_system.providers.adk import ADKModelClient
 from env_agent_rsi.agent_system.providers.api import APIModelClient
+from env_agent_rsi.agent_system.providers.ollama import OllamaModelClient
 
 
 def build_model_client(
@@ -35,6 +36,12 @@ def build_model_client(
         return ADKModelClient(
             model=settings.model,
             executor=settings.executor,
+            args=args,
+        )
+    if settings.type == "ollama":
+        return OllamaModelClient(
+            model=settings.model,
+            base_url=settings.base_url or "http://127.0.0.1:11434",
             args=args,
         )
     raise ValueError(f"unknown provider type: {settings.type!r}")

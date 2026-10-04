@@ -39,12 +39,14 @@ class DiagnosticAgent(ConfiguredAgent):
     ) -> FailureSignature:
         if isinstance(episode, EpisodeResult):
             trace = episode.trace
+            messages = episode.messages
             evaluation = episode.evaluation
             descriptor = episode.final_descriptor.to_dict()
             stopped_reason = episode.stopped_reason
             steps = episode.steps
         else:
             trace = tuple(episode.get("trace", ()))
+            messages = tuple(episode.get("messages", ()))
             raw = dict(episode.get("evaluation", {}))
             evaluation = EvaluationResult(
                 success=bool(raw.get("success", False)),
@@ -69,6 +71,7 @@ class DiagnosticAgent(ConfiguredAgent):
             "episode": {"stopped_reason": stopped_reason, "steps": steps},
             "evaluation": evaluation.to_dict(),
             "trace": list(trace),
+            "agent_visible_messages": list(messages),
             "allowed_environment_phases": [
                     "setup",
                     "contract",

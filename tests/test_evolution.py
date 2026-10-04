@@ -23,6 +23,7 @@ from env_agent_rsi.evolution import (
 )
 from env_agent_rsi.harness.wrapper import RuleHarness
 from env_agent_rsi.transforms import ReplaySetupRule, StepBudgetRule
+from env_agent_rsi.transforms import AddToolGuidanceContractRule
 
 
 class FakeBenchmarkBackend:
@@ -173,6 +174,22 @@ class MutationAndLineageTests(unittest.TestCase):
 
 
 class HarnessAndAdapterTests(unittest.TestCase):
+    def test_tool_guidance_changes_visible_contract_without_blocking_action(self) -> None:
+        backend = FakeBenchmarkBackend()
+        env = RuleHarness(
+            BenchmarkAdapter(backend),
+            contract_rules=[
+                AddToolGuidanceContractRule(
+                    "increment", "Inspect the current value before finishing."
+                )
+            ],
+        )
+        descriptor = env.describe()
+        description = descriptor.tools[0]["function"]["description"]
+        self.assertIn("Inspect the current value", description)
+        response = env.step(Action("increment", {}))
+        self.assertTrue(response.observation["ok"])
+
     def test_setup_runs_before_agent_and_does_not_consume_budget(self) -> None:
         backend = FakeBenchmarkBackend()
         env = RuleHarness(

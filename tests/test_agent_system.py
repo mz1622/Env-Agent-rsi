@@ -18,6 +18,10 @@ from env_agent_rsi.agent_system.modifier import EnvironmentModificationAgent
 from env_agent_rsi.agent_system.providers.adk import ADKModelClient
 from env_agent_rsi.agent_system.providers.api import APIModelClient
 from env_agent_rsi.agent_system.providers.factory import build_model_client
+from env_agent_rsi.agent_system.providers.ollama import (
+    OllamaModelClient,
+    _parse_ollama_chat,
+)
 from env_agent_rsi.evolution import (
     FailureSignature,
     MutationSurface,
@@ -32,6 +36,26 @@ MODIFIER_CONFIG = ROOT / "configs/agents/environment_modifier_agent.json"
 
 
 class AgentConfigurationTests(unittest.TestCase):
+    def test_ollama_provider_parses_agent0_text_action(self) -> None:
+        output = _parse_ollama_chat(
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": (
+                        '<tool_call>{"name":"finish","arguments":{}}'
+                        "</tool_call>"
+                    ),
+                }
+            }
+        )
+        self.assertEqual(output.tool_name, "finish")
+        self.assertTrue(output.serialized_action)
+
+    def test_factory_builds_local_ollama_target(self) -> None:
+        config = load_agent_config(ROOT / "configs/agents/target_qwen3_4b.json")
+        client = build_model_client(config.provider)
+        self.assertIsInstance(client, OllamaModelClient)
+
     def test_environment_side_llm_roles_share_deepseek_flash(self) -> None:
         configs = [
             load_agent_config(DIAGNOSTIC_CONFIG),

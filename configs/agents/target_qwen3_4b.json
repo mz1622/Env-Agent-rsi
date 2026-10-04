@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "name": "local-qwen3-4b-target",
+  "role": "target",
+  "system_prompt": "../prompts/target_system.json",
+  "skills": ["../skills/appworld_interactive_code.json"],
+  "max_steps": 12,
+  "max_context_messages": 30,
+  "provider": {
+    "type": "ollama",
+    "model": "qwen3:4b-direct",
+    "base_url": "http://127.0.0.1:11434",
+    "args": {
+      "stream": false,
+      "use_native_tools": true,
+      "options": {
+        "temperature": 0,
+        "num_ctx": 16384,
+        "num_predict": 1024,
+        "seed": 0
+      },
+      "timeout": 300
+    }
+  }
+}

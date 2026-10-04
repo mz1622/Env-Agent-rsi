@@ -6,7 +6,7 @@
 
 from .action import RequireArgumentRule
 from .budget import StepBudgetRule
-from .contract import RequireArgumentContractRule
+from .contract import AddToolGuidanceContractRule, RequireArgumentContractRule
 from .observation import StaleReadAfterWriteRule
 from .stale_field import StaleFieldAfterActionRule
 from .protocols import (
@@ -24,6 +24,7 @@ from .transition import PostCommitTimeoutRule
 __all__ = [
     "ActionDecision",
     "ActionRule",
+    "AddToolGuidanceContractRule",
     "BudgetRule",
     "ContractRule",
     "ObservationRule",

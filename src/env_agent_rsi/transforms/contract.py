@@ -99,3 +99,53 @@ class RequireArgumentContractRule:
 
     def load_state(self, state: Mapping[str, Any]) -> None:
         self.block_count = int(state["block_count"])
+
+
+class AddToolGuidanceContractRule:
+    """向既有工具说明追加环境侧操作引导，不改变工具参数或执行语义。"""
+
+    name = "add_tool_guidance"
+
+    def __init__(self, tool: str, guidance: str) -> None:
+        if not guidance.strip():
+            raise ValueError("tool guidance must not be empty")
+        self.tool = tool
+        self.guidance = guidance.strip()
+
+    def reset(self) -> None:
+        return None
+
+    def transform_descriptor(
+        self, descriptor: EnvDescriptor, state: Mapping[str, Any]
+    ) -> EnvDescriptor:
+        del state
+        tools = deepcopy(list(descriptor.tools))
+        matched = False
+        for schema in tools:
+            function = schema.get("function", {})
+            if function.get("name") != self.tool:
+                continue
+            original = str(function.get("description", "")).strip()
+            function["description"] = (
+                f"{original}\n\nEnvironment guidance: {self.guidance}"
+                if original
+                else f"Environment guidance: {self.guidance}"
+            )
+            matched = True
+        if not matched:
+            raise ValueError(
+                f"contract tool {self.tool!r} is not in the base descriptor"
+            )
+        return replace_tools(descriptor, tools)
+
+    def validate_action(
+        self, state: Mapping[str, Any], action: Action
+    ) -> EnvResponse | None:
+        del state, action
+        return None
+
+    def save_state(self) -> JsonObject:
+        return {}
+
+    def load_state(self, state: Mapping[str, Any]) -> None:
+        del state

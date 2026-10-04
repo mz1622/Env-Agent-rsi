@@ -248,7 +248,7 @@ class AppWorldProcessBackend:
             supported_contract_axes=("f_A",),
             supported_implementations={
                 "setup": ("replay",),
-                "contract": ("require_argument",),
+                "contract": ("require_argument", "add_tool_guidance"),
                 "action": ("require_argument",),
                 "budget": ("step_budget",),
             },

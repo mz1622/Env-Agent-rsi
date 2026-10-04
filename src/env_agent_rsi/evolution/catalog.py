@@ -144,6 +144,18 @@ def default_mutation_catalog() -> MutationCatalog:
         )
     catalog.register(
         MutationImplementation(
+            "contract",
+            "add_tool_guidance",
+            {"tool": "string", "guidance": "string"},
+            {},
+            (
+                "向一个现有工具的 Agent 可见说明追加简短操作引导；不得包含任务答案，"
+                "也不改变参数、执行语义或 verifier。"
+            ),
+        )
+    )
+    catalog.register(
+        MutationImplementation(
             "transition",
             "post_commit_timeout",
             {},

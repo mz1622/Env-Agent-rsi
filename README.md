@@ -26,9 +26,13 @@ AppWorld task ──> Agent0 parquet ──> Qwen/Qwen3-4B-Base + Agent0 ADPO
 - `src/env_agent_rsi/transforms`：Setup、Contract、Action、Transition、Observation、Budget。
 - `src/env_agent_rsi/evolution`：失败签名、mutation allowlist、配置物化和环境 DAG。
 - `src/env_agent_rsi/orchestration`：同 seed 配对评估、轨迹保存和隔离运行。
+- `experiments/appworld_env_evolution`：本地 Qwen Target → DeepSeek Diagnose →
+  DeepSeek Modify → 相同 Target 重跑的三任务真实闭环。
 
 AppWorld 第一版 mutation surface 只开放已能可靠验证的 Setup、Contract、Action、Budget；
 Transition 与 Observation 实现仍保留为通用模块，但不会伪装成 AppWorld 已支持能力。
+Contract 目前还支持 `add_tool_guidance`：只向既有工具说明追加不含答案的最小流程提示，
+用于验证信息发现类失败能否由环境契约辅助，而不改 Target 权重、任务或 verifier。
 
 ## 安装与运行
 
@@ -42,6 +46,10 @@ env-agent-rsi-agent0-data
 env-agent-rsi-agent0-server
 env-agent-rsi-agent0-train          # 先打印可审计命令
 env-agent-rsi-agent0-train --execute
+
+# 单步环境进化配对实验（需本地 Ollama qwen3:4b-direct 与 api.txt）
+PYTHONPATH=src ../.venv/bin/python \
+  experiments/appworld_env_evolution/run_three_tasks.py
 ```
 
 AppWorld 版本固定在 `configs/benchmarks/appworld_train.json`。默认模型和训练参数位于
