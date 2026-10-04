@@ -16,7 +16,7 @@
       "options": {
         "temperature": 0,
         "num_ctx": 16384,
-        "num_predict": 1024,
+        "num_predict": 8192,
         "seed": 0
       },
       "timeout": 300
