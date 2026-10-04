@@ -25,6 +25,8 @@ AppWorld task ──> Agent0 parquet ──> Qwen/Qwen3-4B-Base + Agent0 ADPO
 - `src/env_agent_rsi/agent_system`：Diagnostic 与 Environment Modifier。
 - `src/env_agent_rsi/transforms`：Setup、Contract、Action、Transition、Observation、Budget。
 - `src/env_agent_rsi/evolution`：失败签名、mutation allowlist、配置物化和环境 DAG。
+- `EnvironmentBucket`：持久保存环境 spec、完整 DAG、评测 archive 和当前 best，供
+  `BestFirstEnvironmentSearch` 从最好节点继续展开。
 - `src/env_agent_rsi/orchestration`：同 seed 配对评估、轨迹保存和隔离运行。
 - `experiments/appworld_env_evolution`：本地 Qwen Target → DeepSeek Diagnose →
   DeepSeek Modify → 相同 Target 重跑的三任务真实闭环。

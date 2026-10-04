@@ -17,7 +17,15 @@ from .core.protocol import (
     EvaluationResult,
 )
 from .harness.factory import build_environment, load_spec
-from .evolution import EnvironmentDAG, FailureSignature, MutationSpec, MutationSurface
+from .evolution import (
+    BestFirstEnvironmentSearch,
+    EnvironmentBucket,
+    EnvironmentDAG,
+    EvaluationBatch,
+    FailureSignature,
+    MutationSpec,
+    MutationSurface,
+)
 from .orchestration import PairedRolloutEvaluator, TraceStore
 
 __all__ = [
@@ -31,6 +39,9 @@ __all__ = [
     "EnvResponse",
     "EvaluationResult",
     "EnvironmentDAG",
+    "EnvironmentBucket",
+    "EvaluationBatch",
+    "BestFirstEnvironmentSearch",
     "EnvironmentModificationAgent",
     "FailureSignature",
     "ModelClient",

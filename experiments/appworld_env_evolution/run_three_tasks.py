@@ -17,8 +17,10 @@ from env_agent_rsi.agent_system.diagnostic import DiagnosticAgent
 from env_agent_rsi.agent_system.modifier import EnvironmentModificationAgent
 from env_agent_rsi.agent_system.target import TargetAgent
 from env_agent_rsi.evolution import (
+    BestFirstEnvironmentSearch,
+    EnvironmentBucket,
+    EvaluationBatch,
     default_mutation_catalog,
-    materialize_environment_spec,
 )
 from env_agent_rsi.harness.factory import build_environment
 
@@ -26,6 +28,7 @@ from env_agent_rsi.harness.factory import build_environment
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_TASKS = ("e85d92a_1", "e85d92a_2", "e85d92a_3")
 DEFAULT_OUTPUT = ROOT / "artifacts/appworld_train/env_evolution_three_tasks.json"
+DEFAULT_BUCKET_ROOT = ROOT / "artifacts/appworld_train/environment_buckets"
 
 
 def _base_spec(task_id: str) -> dict[str, Any]:
@@ -83,7 +86,9 @@ def _run_target(target: TargetAgent, spec: Mapping[str, Any]) -> tuple[Any, Any]
         _close_environment(env)
 
 
-def run(tasks: tuple[str, ...], output: Path) -> dict[str, Any]:
+def run(
+    tasks: tuple[str, ...], output: Path, bucket_root: Path
+) -> dict[str, Any]:
     target = TargetAgent.from_config(ROOT / "configs/agents/target_qwen3_4b.json")
     diagnostic = DiagnosticAgent.from_config(
         ROOT / "configs/agents/diagnostic_agent.json"
@@ -96,10 +101,34 @@ def run(tasks: tuple[str, ...], output: Path) -> dict[str, Any]:
     summaries: list[dict[str, Any]] = []
 
     for index, task_id in enumerate(tasks, start=1):
+        bucket = EnvironmentBucket(
+            bucket_root / task_id,
+            scope=f"appworld-train:{task_id}",
+        )
+        if bucket.has_best:
+            parent_node = bucket.best_node()
+            parent_spec = bucket.best_spec()
+            resumed_from_bucket = True
+        elif bucket.dag.nodes:
+            raise RuntimeError(
+                f"bucket for {task_id} has nodes but no evaluated best"
+            )
+        else:
+            parent_spec = _base_spec(task_id)
+            parent_node = bucket.add_root(
+                parent_spec,
+                metadata={"task_id": task_id, "kind": "root"},
+            )
+            resumed_from_bucket = False
         print(f"[{index}/{len(tasks)}] {task_id}: baseline target", flush=True)
         started = time.monotonic()
-        parent_spec = _base_spec(task_id)
         baseline, surface = _run_target(target, parent_spec)
+        bucket.record_evaluation(
+            parent_node.node_id,
+            EvaluationBatch.from_episodes(
+                [baseline], seeds=(0,), source="baseline-target"
+            ),
+        )
         baseline_summary = _episode_summary(baseline)
         print(
             f"[{index}/{len(tasks)}] {task_id}: baseline "
@@ -115,6 +144,7 @@ def run(tasks: tuple[str, ...], output: Path) -> dict[str, Any]:
             catalog=catalog,
         )
         mutation = None
+        expansion = None
         candidate_spec = None
         candidate = None
         if diagnosis.environment_actionable:
@@ -125,14 +155,29 @@ def run(tasks: tuple[str, ...], output: Path) -> dict[str, Any]:
                 surface=surface,
                 catalog=catalog,
             )
-            candidate_spec = materialize_environment_spec(
-                parent_spec,
-                mutation,
+            if bucket.best_node_id != parent_node.node_id:
+                raise RuntimeError(
+                    "bucket best changed after baseline evaluation; rerun from the "
+                    "new best before diagnosing a child"
+                )
+            search = BestFirstEnvironmentSearch(
+                bucket,
                 surface=surface,
                 catalog=catalog,
             )
+            expansion = search.expand_best(
+                mutation,
+                metadata={"task_id": task_id, "diagnosis": diagnosis.category},
+            )
+            candidate_spec = expansion.environment_spec
             print(f"[{index}/{len(tasks)}] {task_id}: modified target", flush=True)
             candidate, _ = _run_target(target, candidate_spec)
+            search.record_result(
+                expansion,
+                EvaluationBatch.from_episodes(
+                    [candidate], seeds=(0,), source="candidate-target"
+                ),
+            )
 
         candidate_summary = _episode_summary(candidate) if candidate else None
         summary = {
@@ -156,6 +201,22 @@ def run(tasks: tuple[str, ...], output: Path) -> dict[str, Any]:
                 else {"source": "modifier_skipped", "mutation": None}
             ),
             "candidate": candidate_summary,
+            "environment_bucket": {
+                "scope": bucket.scope,
+                "path": str(bucket.root),
+                "resumed_from_bucket": resumed_from_bucket,
+                "parent_node_id": parent_node.node_id,
+                "candidate_node_id": (
+                    expansion.child_node_id if expansion is not None else None
+                ),
+                "best_node_id": bucket.best_node_id,
+                "candidate_accepted": (
+                    expansion is not None
+                    and bucket.best_node_id == expansion.child_node_id
+                ),
+                "node_count": len(bucket.dag.nodes),
+                "edge_count": len(bucket.dag.edges),
+            },
             "elapsed_seconds": round(time.monotonic() - started, 3),
         }
         summaries.append(summary)
@@ -206,8 +267,13 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("task_ids", nargs="*", default=list(DEFAULT_TASKS))
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--bucket-root", type=Path, default=DEFAULT_BUCKET_ROOT)
     args = parser.parse_args()
-    result = run(tuple(args.task_ids), args.output.resolve())
+    result = run(
+        tuple(args.task_ids),
+        args.output.resolve(),
+        args.bucket_root.resolve(),
+    )
     print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
 
 

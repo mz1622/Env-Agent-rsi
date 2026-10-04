@@ -7,6 +7,10 @@
 3. DeepSeek Modifier 把诊断转换成一个通过 mutation surface 白名单校验的环境变化；
 4. 在相同任务、seed、Target 配置上重新运行，并比较改动前后的官方得分。
 
+每个 task scope 都有独立的持久化 `EnvironmentBucket`。首次运行写入 root；以后运行
+从 bucket 当前 best 节点恢复，新的 mutation 形成 child。较差 child 仍保留在树中，
+但不会取代 best；严格更优的 child 会成为下一轮 expansion parent。
+
 默认任务是先前已经稳定失败的 `e85d92a_1`、`e85d92a_2`、`e85d92a_3`。
 Target 使用 `configs/agents/target_qwen3_4b.json`，环境侧两个 Agent 使用各自的
 DeepSeek API 配置。完整轨迹只写入 Git 忽略的 `artifacts/appworld_train/`，避免提交
@@ -16,6 +20,9 @@ AppWorld 受保护任务内容；摘要不保存任务文本、答案或工具�
 PYTHONPATH=src ../.venv/bin/python \
   experiments/appworld_env_evolution/run_three_tasks.py
 ```
+
+默认树目录为 `artifacts/appworld_train/environment_buckets/<task_id>/`。可通过
+`--bucket-root` 指向另一个 archive；不要让不同任务或不同评测协议共享同一 scope。
 
 如果诊断判断失败不可由当前环境白名单修复，实验会明确记录 `modifier_skipped`，不会
 伪造改动或绕过 schema 校验。

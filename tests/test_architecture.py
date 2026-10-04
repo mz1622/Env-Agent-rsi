@@ -34,6 +34,7 @@ class RegistryTests(unittest.TestCase):
         self.assertNotIn("verifiers", components)
         self.assertIn("replay", components["setup_rules"])
         self.assertIn("require_argument", components["contract_rules"])
+        self.assertIn("add_tool_guidance", components["contract_rules"])
         self.assertIn("require_argument", components["action_rules"])
         self.assertIn("post_commit_timeout", components["transition_rules"])
         self.assertIn("stale_read_after_write", components["observation_rules"])

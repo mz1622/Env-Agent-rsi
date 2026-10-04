@@ -9,6 +9,11 @@ from env_agent_rsi.evolution.catalog import (
     MutationImplementation,
     default_mutation_catalog,
 )
+from env_agent_rsi.evolution.bucket import (
+    EnvironmentBucket,
+    EvaluationBatch,
+    stable_environment_hash,
+)
 from env_agent_rsi.evolution.failure import FailureSignature, infer_failure_signature
 from env_agent_rsi.evolution.lineage import EnvironmentDAG, EnvironmentNode
 from env_agent_rsi.evolution.materializer import (
@@ -24,10 +29,18 @@ from env_agent_rsi.evolution.mutation import (
     MutationSpec,
 )
 from env_agent_rsi.evolution.surface import MutationSurface, ObservationChannel, ToolSemantics
+from env_agent_rsi.evolution.search import (
+    BestFirstEnvironmentSearch,
+    EnvironmentExpansion,
+)
 
 __all__ = [
     "EnvironmentDAG",
+    "EnvironmentBucket",
+    "EnvironmentExpansion",
     "EnvironmentNode",
+    "EvaluationBatch",
+    "BestFirstEnvironmentSearch",
     "FailureSignature",
     "CONTRACT_AXES",
     "ENVHARNESS_COMPONENT_TYPES",
@@ -44,4 +57,5 @@ __all__ = [
     "canonicalize_environment_spec",
     "infer_failure_signature",
     "materialize_environment_spec",
+    "stable_environment_hash",
 ]

@@ -39,6 +39,47 @@ class EnvironmentDAG:
         self.nodes: dict[str, EnvironmentNode] = {}
         self.edges: list[JsonObject] = []
 
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> "EnvironmentDAG":
+        """从持久化 JSON 恢复 DAG，并重新执行边与环校验。"""
+
+        raw_nodes = value.get("nodes", [])
+        raw_edges = value.get("edges", [])
+        if not isinstance(raw_nodes, list) or not isinstance(raw_edges, list):
+            raise ValueError("environment DAG nodes and edges must be arrays")
+        dag = cls()
+        declared_parents: dict[str, set[str]] = {}
+        for raw_node in raw_nodes:
+            if not isinstance(raw_node, Mapping):
+                raise ValueError("environment DAG node must be an object")
+            environment_hash = str(raw_node["environment_hash"])
+            node = dag.add_root(environment_hash, raw_node.get("metadata", {}))
+            if str(raw_node.get("node_id", "")) != node.node_id:
+                raise ValueError("environment DAG node id does not match hash")
+            parents = raw_node.get("parents", [])
+            if not isinstance(parents, list):
+                raise ValueError("environment DAG parents must be an array")
+            declared_parents[node.node_id] = {str(parent) for parent in parents}
+        for raw_edge in raw_edges:
+            if not isinstance(raw_edge, Mapping):
+                raise ValueError("environment DAG edge must be an object")
+            child_id = str(raw_edge["child"])
+            child = dag.nodes.get(child_id)
+            if child is None:
+                raise KeyError(f"unknown child node in DAG edge: {child_id!r}")
+            mutation = MutationSpec.from_dict(dict(raw_edge["mutation"]))
+            if raw_edge.get("mutation_id") != mutation.digest:
+                raise ValueError("environment DAG mutation id mismatch")
+            dag.add_child(
+                [str(raw_edge["parent"])],
+                mutation,
+                child.environment_hash,
+            )
+        for node_id, parents in declared_parents.items():
+            if dag.nodes[node_id].parents != parents:
+                raise ValueError("environment DAG declared parents disagree with edges")
+        return dag
+
     def add_root(
         self, environment_hash: str, metadata: Mapping[str, Any] | None = None
     ) -> EnvironmentNode:
