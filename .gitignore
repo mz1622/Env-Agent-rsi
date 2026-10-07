@@ -1,11 +1,30 @@
-.artifact/node_modules
-outputs/**/*.inspect.ndjson
-.DS_Store
+# Local credentials (never commit)
+api.txt
+.env
+
+# Python environments and caches
+.venv/
+venv/
 __pycache__/
 *.py[cod]
 *.egg-info/
 .pytest_cache/
-.venv/
-artifacts/runs/
-artifacts/appworld_train/
-api.txt
+.mypy_cache/
+.ruff_cache/
+
+# Local experiment state and generated artifacts
+runs/
+artifacts/
+outputs/
+.artifact/
+*.log
+
+# Local benchmark/model payloads
+data/
+models/
+checkpoints/
+
+# Editor / OS metadata
+.DS_Store
+.idea/
+.vscode/

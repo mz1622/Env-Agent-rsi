@@ -1,75 +1,397 @@
-# Env-Agent-RSI
+# *EnvHarness*: Awakening Static Worlds for Agent Learning
 
-这个仓库现在只保留一个可运行 benchmark：**AppWorld**。Target Agent 的训练与多轮
-rollout 复用 [Agent0](https://github.com/aiming-lab/Agent0)；本项目负责 AppWorld 环境、
-诊断、环境修改、候选环境评估与版本 DAG。其他 toy、τ³、手写订单/代码任务及其 adapter
-已经移除，避免同时维护多套不一致接口。
+Check out our [paper](https://arxiv.org/abs/2608.19880) and [webpage](https://envharness.com/) for more details.
 
-## 当前完成的最小链路
+## 🔥 Updates
 
-```text
-AppWorld task ──> Agent0 parquet ──> Qwen/Qwen3-4B-Base + Agent0 ADPO
-                                             │
-                                  Agent0 AsyncToolServer
-                                             │
-                                  AppWorldAgent0Tool
-                                             │
-                                  AppWorldProcessBackend
-                                             │
-                                    官方 evaluator 奖励
-```
+<!-- FILL: one dated bullet per release / acceptance / follow-up, newest first. -->
+- [2026-08-21] We released our [paper](https://arxiv.org/abs/2608.19880) and [website](https://envharness.com/).
 
-- `third_party/Agent0`：固定 commit 的官方 submodule；训练器不复制、不 fork。
-- `src/env_agent_rsi/benchmarks/appworld`：隔离 AppWorld Python 3.12 worker。
-- `src/env_agent_rsi/integrations/agent0`：数据、工具、奖励、训练参数四个薄适配点。
-- `src/env_agent_rsi/agent_system`：Diagnostic 与 Environment Modifier。
-- `src/env_agent_rsi/transforms`：Setup、Contract、Action、Transition、Observation、Budget。
-- `src/env_agent_rsi/evolution`：失败签名、mutation allowlist、配置物化和环境 DAG。
-- `EnvironmentBucket`：持久保存环境 spec、完整 DAG、评测 archive 和当前 best，供
-  `BestFirstEnvironmentSearch` 从最好节点继续展开。
-- `src/env_agent_rsi/orchestration`：同 seed 配对评估、轨迹保存和隔离运行。
-- `experiments/appworld_env_evolution`：本地 Qwen Target → DeepSeek Diagnose →
-  DeepSeek Modify → 相同 Target 重跑的三任务真实闭环。
+## 🏴󠁶󠁵󠁭󠁡󠁰󠁿 Overview
 
-AppWorld 第一版 mutation surface 只开放已能可靠验证的 Setup、Contract、Action、Budget；
-Transition 与 Observation 实现仍保留为通用模块，但不会伪装成 AppWorld 已支持能力。
-Contract 目前还支持 `add_tool_guidance`：只向既有工具说明追加不含答案的最小流程提示，
-用于验证信息发现类失败能否由环境契约辅助，而不改 Target 权重、任务或 verifier。
+As LLMs become autonomous agents, they learn less from curated text and more from
+interactive environments. But those environments are expensive to build and, once
+built, stay **static** — they behave identically no matter which agent interacts
+with them or how much it has improved, so they can neither target a particular
+agent's weaknesses nor keep teaching once its tasks are solved. **EnvHarness**
+applies the *agent harness* idea to the other side of the interaction: just as an
+agent harness makes a frozen LLM capable through plug-in components (skills,
+memory, tools) without changing its weights, EnvHarness wraps a **frozen
+environment** with its own plug-in components to make it dynamically controllable
+— without touching the environment's internal code.
 
-## 安装与运行
+The environment search uses two change protocols. **Stage** is implemented by
+`Setup`: it replays normal tool actions after reset to reshape the initial
+state. **Contract** is implemented by `Rules`: it changes which actions are
+allowed, what transitions return, and what the agent observes through the A/T/O
+hooks. Each Candidate returns four independent slots—Stage, f_A, f_T, and
+f_O—and may leave any inapplicable slot empty. The goal predicate remains
+untouched, preserving the benchmark's trusted verifier.
+
+An LLM **designer agent** drives a diagnostic loop: it reads the
+agent's trajectories to diagnose a specific weakness, writes components that
+reshape the environment to target it, tests the policy in the new environment,
+and revises until the environment can actually *teach* what the agent lacks. The
+signal is targeted (written against diagnosed flaws) and lasting (the loop repeats
+as the agent improves, co-evolving the two).
+
+Across ALFWorld, WebArena, SWE-bench Verified, OfficeQA, and SpreadsheetBench,
+skills learned in EnvHarness environments beat both the no-skill baseline and
+skills learned in the original environments — more effective (up to +9 points on
+held-out tasks) and more efficient (~9.8% fewer interaction steps). The same
+dynamic environments also produce stronger policies under reinforcement learning,
+and repeating the designer loop compounds the gains round after round.
+
+### Key Features
+* **Frozen environments, no internal edits:** the benchmark's task set, its
+  dynamics and its grading stay exactly as published. Only the layer the agent
+  acts *through* changes.
+* **Code as the Envharness:** the designer emits real Python — a `_Rules(Rules)`
+  subclass — not a selection from a fixed menu. It is compiled and executed in
+  an isolated subprocess, so a bad mutation becomes a recorded trace instead of
+  a dead run.
+* **Four independent change slots:** every proposal evaluates Stage plus
+  Contract f_A/f_T/f_O independently and fills only applicable slots.
+* **External-search boundary:** EnvRigger emits up to four independent changes
+  before external selection. MCTS may select a current or historical proposal
+  together with its source environment; EnvHarness then applies and validates
+  it as a new node. See
+  [`envharness/orchestration/TREE_SEARCH.md`](envharness/orchestration/TREE_SEARCH.md).
+* **Benchmark-agnostic:** adding an environment means implementing one
+  interface; the designer, the components, the loop and the evaluation stages
+  need no changes.
+
+---
+
+## ⚡️ Quickstart Guide
+
+### 0. LLM Configuration
+
+This fork uses two deliberately separate model roles by default:
+
+- **Policy / Target Agent:** local Ollama `qwen3:4b-direct` at
+  `http://127.0.0.1:11434`.
+- **HarnessAgent / Mutator (Env Rigger):** DeepSeek API
+  `deepseek/deepseek-flash` at `https://api.deepseek.com`.
+
+Start Ollama and verify the local model:
 
 ```bash
-python scripts/setup_appworld.py
-PYTHONPATH=src python experiments/appworld_train_adapter/select_tasks.py
-
-git submodule update --init --recursive third_party/Agent0
-python -m pip install -e '.[data]'
-env-agent-rsi-agent0-data
-env-agent-rsi-agent0-server
-env-agent-rsi-agent0-train          # 先打印可审计命令
-env-agent-rsi-agent0-train --execute
-
-# 单步环境进化配对实验（需本地 Ollama qwen3:4b-direct 与 api.txt）
-PYTHONPATH=src ../.venv/bin/python \
-  experiments/appworld_env_evolution/run_three_tasks.py
+ollama list | grep qwen3:4b-direct
 ```
 
-AppWorld 版本固定在 `configs/benchmarks/appworld_train.json`。默认模型和训练参数位于
-`configs/agent0/appworld_minimal.json`。4-train/1-validation 只是接入 smoke split，不是论文
-最终训练/测试划分。
-
-## 奖励边界
-
-AppWorld 官方 evaluator 在隔离 worker 中运行。环境使用每条 parquet 记录的随机 key 为
-evaluator payload 生成 HMAC；reward 函数仅接受签名正确、task id 一致的结果。模型自行
-输出“成功”或伪造 XML 不能得分。
-
-## 测试
+DeepSeek credentials are resolved in this order: `DEEPSEEK_API_KEY`,
+`DEEPSEEK_API_KEYS`, then the file named by `EH_DEEPSEEK_API_KEY_FILE`. With no
+file override, the ignored repository-root `api.txt` is used. Never commit that
+file.
 
 ```bash
-PYTHONPATH=src python -m pytest -q
+printf '%s\n' 'your-deepseek-api-key' > api.txt
+python scripts/check_env.py toy24
 ```
 
-本仓库只收集 `tests/`；Agent0 submodule 自带的 Ray/vLLM/GPU 测试应在官方训练环境中单独
-运行。详细说明见 `src/env_agent_rsi/integrations/agent0/README.md`、
-`src/env_agent_rsi/benchmarks/appworld/README.md` 和 `docs/architecture.md`。
+Every corpus YAML in `experiments/` keeps the two roles explicit:
+
+```yaml
+policy:
+  model: ollama/qwen3:4b-direct
+agent:  # some legacy configs call this block `mutator`
+  type: llm
+  model: deepseek/deepseek-flash
+```
+
+Override roles independently when needed:
+
+```bash
+python scripts/run_harness.py --config experiments/toy24/mutated_smoke.yaml \
+  --policy-model ollama/qwen3:4b-direct \
+  --agent-model deepseek/deepseek-flash
+```
+
+The legacy `--model` flag and `EH_MODEL` variable are still supported and
+intentionally override **both** roles. Do not use them for the default split
+setup. Full reproduction drivers expose `POLICY_MODEL`, `AGENT_MODEL`, and
+`INDUCTION_MODEL` separately.
+
+**Concurrency follows your rate limit, not your CPU.** Every benchmark runs
+its tasks through a pool of workers (`CORPUS_WORKERS`, `EVAL_WORKERS`,
+`EVAL_CONCURRENCY`, ... -- see each benchmark's README). The defaults suit a
+modest quota; a pool large enough to saturate your provider's tokens-per-minute
+tier turns into 429s that truncate episodes mid-task, which shows up as
+unexpectedly low success rates rather than as an error. Raise the pool when
+your quota allows, and on Gemini give it several keys (`GEMINI_API_KEYS`) --
+that quota is metered per key, so the workers spread across them.
+
+#### Embeddings
+
+Skill retrieval needs an embedding model too. OpenAI, Vertex and Gemini have
+paired defaults. DeepSeek chat and the local Ollama Policy do not imply a
+compatible embedding space, so set `EH_EMBED_MODEL` explicitly before building
+or querying reasoning banks.
+
+| `MODEL` provider | embedding model | dim |
+| --- | --- | --- |
+| `openai/...` | `openai/text-embedding-3-small` | 1536 |
+| `vertex_ai/...` | `vertex_ai/text-embedding-004` (same ADC) | 768 |
+| `gemini/...` | `gemini/gemini-embedding-001` | 3072 |
+| `deepseek/...` or `ollama/...` | set `EH_EMBED_MODEL` explicitly | provider-dependent |
+
+`EH_EMBED_MODEL` overrides the pairing for both bank building and retrieval,
+and takes any embedding model litellm supports (with that provider's own
+credentials set):
+
+```bash
+EH_EMBED_MODEL=openai/text-embedding-3-small \
+MODEL=vertex_ai/claude-sonnet-4-6 python experiments/alfworld/reproduce.py
+```
+
+That is also why the override exists: it holds one embedding space fixed while
+the policy provider changes. A bank stores its vectors, and `Bank.retrieve`
+rejects a query vector of a different width, so changing the embedding model —
+including by changing provider — means rebuilding the bank.
+
+### 1. Run a benchmark
+
+Each benchmark has its own environment and its own one-command driver.
+**Open the README in the experiment folder you want to run** — it carries the
+environment setup, the run commands and the knobs for that benchmark:
+
+- [`experiments/toy24`](experiments/toy24/README.md)
+- [`experiments/alfworld`](experiments/alfworld/README.md)
+- [`experiments/swebench`](experiments/swebench/README.md)
+- [`experiments/webarena`](experiments/webarena/README.md)
+- [`experiments/officeqa`](experiments/officeqa/README.md)
+- [`experiments/spreadsheetbench`](experiments/spreadsheetbench/README.md)
+
+Every folder follows the same shape:
+
+```bash
+python scripts/check_env.py <benchmark>           # preflight
+bash experiments/<benchmark>/reproduce_smoke.sh   # the same stages, fewer tasks
+python experiments/<benchmark>/reproduce.py       # the full protocol
+```
+
+The experiments above distill/evaluate **skills**. For **RL training** — a policy
+trained with GRPO directly inside EnvHarness environments (via verl-agent) — see
+[`rl/`](rl/README.md).
+
+
+
+## 📊 Results
+
+Skills induced from EnvHarness-adapted environments transfer back to the
+**untouched** benchmark and beat both controls — no skills at all, and skills
+induced from the original environments. All numbers are the mean over three
+independent runs, with standard deviations as subscripts. A dash marks a
+baseline that is benchmark-specific and cannot be applied to the other domain;
+EnvHarness covers every benchmark through the same interface.
+
+### ALFWorld and WebArena
+
+| Skill Source | ALFWorld In-Dist | ALFWorld OOD | ALFWorld Avg. | Reddit | Shopping | Shop Admin | GitLab | WebArena Avg. |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| No Skills | 62.6<sub>1.7</sub> | 60.7<sub>5.2</sub> | 61.7<sub>3.4</sub> | 39.6<sub>2.3</sub> | 35.2<sub>3.3</sub> | 44.1<sub>2.3</sub> | 35.8<sub>8.4</sub> | 38.7<sub>2.3</sub> |
+| Original Envs | 63.3<sub>2.8</sub> | 61.4<sub>4.3</sub> | 62.4<sub>3.4</sub> | 38.7<sub>9.7</sub> | 35.2<sub>1.3</sub> | 44.6<sub>3.0</sub> | 35.4<sub>4.0</sub> | 38.5<sub>3.1</sub> |
+| GenEnv | 63.3<sub>1.2</sub> | 61.9<sub>2.7</sub> | 62.6<sub>1.9</sub> | — | — | — | — | — |
+| VeriEnv | — | — | — | 39.6<sub>4.2</sub> | 30.2<sub>0.0</sub> | 49.7<sub>2.4</sub> | **38.9**<sub>5.6</sub> | 39.6<sub>1.4</sub> |
+| **EnvHarness Envs** | **66.2**<sub>0.3</sub> | **70.4**<sub>2.3</sub> | **68.3**<sub>1.3</sub> | **40.6**<sub>4.7</sub> | **37.4**<sub>0.3</sub> | **50.8**<sub>1.5</sub> | 37.7<sub>3.1</sub> | **41.6**<sub>1.8</sub> |
+| *Δ (EnvHarness − Original)* | *+2.9* | *+9.0* | *+5.9* | *+1.9* | *+2.2* | *+6.2* | *+2.3* | *+3.1* |
+
+### SWE-bench Verified, OfficeQA and SpreadsheetBench
+
+| Skill Source | SWE-verified SR ↑ | SWE-verified AS ↓ | OfficeQA EM ↑ | OfficeQA F1 ↑ | SpreadsheetBench Pass@1 ↑ | SpreadsheetBench Mean Score ↑ |
+|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| No Skills | 47.67<sub>0.93</sub> | 53.58<sub>2.93</sub> | 54.23<sub>2.84</sub> | 55.77<sub>2.98</sub> | 46.44<sub>0.15</sub> | 61.32<sub>0.37</sub> |
+| Original Envs | 49.88<sub>2.59</sub> | 55.01<sub>1.69</sub> | 54.40<sub>1.84</sub> | 55.77<sub>1.59</sub> | 45.88<sub>1.19</sub> | 61.47<sub>0.59</sub> |
+| SWE-smith | 50.12<sub>1.74</sub> | 54.72<sub>2.03</sub> | — | — | — | — |
+| **EnvHarness Envs** | **52.58**<sub>2.72</sub> | **49.61**<sub>2.49</sub> | **56.20**<sub>2.34</sub> | **57.73**<sub>2.29</sub> | **49.15**<sub>0.36</sub> | **62.48**<sub>0.27</sub> |
+| *Δ (EnvHarness − Original)* | *+2.70* | *−5.40* | *+1.80* | *+1.97* | *+3.27* | *+1.01* |
+
+SR = success rate, AS = agent steps (lower is better), EM = exact match.
+The three skill sources correspond to the conditions each `reproduce.py` prints:
+`nobank` (No Skills), `orig` (Original Envs) and `ours` (EnvHarness Envs).
+
+**Models.** Every number in both tables was produced with **Gemini**. This fork
+defaults to local Qwen for Policy rollouts and DeepSeek for environment
+rigging, so exact reproduction of the upstream tables requires intentionally
+overriding both roles back to Gemini:
+
+```bash
+python scripts/run_harness.py --config experiments/swebench/corpus.yaml \
+  --model gemini/gemini-3.5-flash
+```
+
+For skill-bank stages, set `EH_EMBED_MODEL` to the embedding space used to build
+the bank. Absolute numbers move with the model; what the tables compare is skill
+sources at a fixed model.
+
+## 🧱 Adding a New Benchmark
+
+A benchmark joins EnvHarness by implementing **one interface**, `ActionableEnv`
+(`reset / step / observe / evaluate / get_env_state / save_state / from_state`).
+Everything downstream — the Environment Designer, the three components, the loop,
+the evaluation — is benchmark-agnostic and needs no changes.
+
+### 1. Implement the Bridge
+
+The Bridge is the **only** layer that may know about a docker container, a
+browser session, or a simulator. Subclass `ActionableEnv`, register a stable
+tag, and implement the seven required methods.
+
+`tool_registry` declares the action space. Its schemas are what the Policy is
+given to act with, and what the Environment Designer is shown so a Rule's
+action hook can match on `action.name`. Each entry is a `Tool` whose schema is
+introspected from its `invoke` signature — see any
+`envharness/bridges/*/tools.py` for the shape.
+
+```python
+# envharness/bridges/mybench/bridge.py
+from envharness.core.actionable_env import ActionableEnv
+from envharness.core.registry import register_env
+from envharness.core.types import (
+    Action, EnvResetResponse, EnvResponse, EvaluationResult, Observation,
+)
+from .tools import Search      # declares name="search"
+
+@register_env("mybench")                  # tag written into save files
+class MyBenchEnv(ActionableEnv):
+    tool_registry = [Search]              # -> tool_schemas() for the Policy
+
+    def reset(self, seed=None, options=None) -> EnvResetResponse:
+        # The orchestrator passes the per-task identifier as `seed`; it indexes
+        # into the benchmark's task library, it is not a randomness source.
+        ...
+        return EnvResetResponse(observation=self.observe(), info={})
+
+    def step(self, action: Action) -> EnvResponse:
+        # Dispatch on action.name -- the same names the Tools declare.
+        if action.name == "search":
+            result = self._search(**action.kwargs)
+        else:
+            result = {"error": f"unknown action {action.name!r}"}
+        return EnvResponse(observation=self.observe(), reward=0.0,
+                           terminated=self._done, truncated=False,
+                           info={"result": result})   # by convention: info["result"]
+
+    def observe(self) -> Observation: ...
+    def evaluate(self) -> EvaluationResult: ...
+    def get_env_state(self): ...          # data only -- NO runtime handles
+    def save_state(self) -> dict: ...
+    @classmethod
+    def from_state(cls, state: dict): ...
+```
+
+Two contracts matter:
+
+* **`get_env_state()` must carry data, never handles.** It is what the
+  designer's generated hooks receive, and it crosses a subprocess boundary. A
+  docker client or a browser page in there breaks both.
+* **`save_state` / `from_state` are yours to define.** In-memory benchmarks can
+  snapshot everything; for a container or a browser, store
+  `{"reset_seed": ..., "reset_options": {...}}` and let `from_state` re-run
+  `reset` — valid at episode boundaries, which is where checkpoints are taken.
+  Override `close()` if there is external state to release; subprocess death
+  does not free it for you.
+
+### 2. Describe the state to the Environment Designer
+
+`env_state_schema()` is injected verbatim into the designer's prompt. It is the
+*only* thing telling it which fields its generated hooks may read, so be
+explicit:
+
+```python
+    @classmethod
+    def env_state_schema(cls) -> str:
+        return ("MyBenchState = {\n"
+                "  query: str,          # the task's question\n"
+                "  hits: list[str],     # results of the last search\n"
+                "  submitted: bool,\n"
+                "}")
+```
+
+Optional hooks, all with safe defaults: `list_tasks()` (enables agent-driven
+task selection), `notify_replay_complete()` (rewind per-episode counters after
+a `Setup` replay), `default_reset_args()` / `reset_after_load()` (checkpoint
+loading), `step_reward()` (dense per-step signal; non-fatal).
+
+### 3. Point a corpus config at it
+
+Corpus generation needs no new code — `scripts/run_harness.py` is
+bridge-agnostic. Copy the closest existing `corpus.yaml` and change the import
+path:
+
+```yaml
+env:
+  import_path: envharness.bridges.mybench.bridge:MyBenchEnv
+  reset_options: { ... }                 # forwarded to your reset()
+policy:
+  client_factory: envharness.infra.llm:LiteLLMClient
+  client_kwargs: { model: openai/gpt-4.1-mini }
+  action_format: function_calling        # or think_action for single-tool text
+objective:
+  type: difficulty_zone
+  target_band: [0.4, 0.6]
+```
+
+Verify it boots before spending a run:
+
+```bash
+python -c "from envharness.bridges.mybench.bridge import MyBenchEnv; MyBenchEnv(); print('OK')"
+python scripts/run_harness.py --config experiments/mybench/corpus.yaml --n-tasks 1
+```
+
+### 4. Reuse the downstream stages
+
+Skill induction and evaluation are shared. `scripts/induce_pair.py` works
+unchanged on per-task rollouts; write a benchmark-local `induce.py` only when the
+induction prompt needs domain phrasing. For the evaluation, copy the driver
+closest to your grading style — they differ only in how they load tasks and score
+them. Then chain the stages in a `reproduce.py` mirroring an existing one.
+
+### 5. Add a preflight target and a test
+
+Add a `check_<bench>()` to `scripts/check_env.py` and register it in `CHECKS`,
+so a missing dependency or dataset fails loudly before a run rather than
+silently grading everything as failure. Then copy
+`tests/test_actionable_env_toy24.py` — it walks the whole `ActionableEnv`
+contract, including a `save_state` / `from_state` round-trip, and needs no GPU,
+docker, or API key:
+
+```bash
+pytest
+```
+
+## Supported environment changes
+
+- **Stage (`Setup`)**: `stage.in_env_actions` is replayed after reset and before
+  the Policy sees its first observation; `stage.rationale` explains that change.
+- **Contract (`Rules`)**: `contract.f_A`, `contract.f_T`, and `contract.f_O` are
+  independent `{code, rationale}` objects defining `filter_action`,
+  `modify_transition`, and `filter_observation`.
+
+A Candidate may populate zero to four slots. The loader combines non-empty
+Contract `code` values into native `rules_code`; every populated slot has its
+own rationale, while an unused slot leaves both its payload and rationale empty.
+
+## 🙏 Acknowledgements
+
+We adopt the memory design of [**ReasoningBank**](https://arxiv.org/abs/2509.25140) in our agent implementation, and we are grateful for their work.
+
+## 💬 Citation
+
+If our work is useful for you, please consider citing our paper:
+
+```
+@article{huang2026envharness,
+      title={EnvHarness: Awakening Static Worlds for Agent Learning}, 
+      author={Chengsong Huang and Zifeng Wang and Rujun Han and Jun Yan and Yanfei Chen and Zoey CuiZhu and Ke Jiang and Peng Xia and Han Yu and Yufan Zhuang and Yifei Ming and Jiaqi Pan and Bhavana Dalvi Mishra and Jiaxin Huang and Burak Gokturk and Tomas Pfister and Chen-Yu Lee},
+      year={2026},
+      eprint={2608.19880},
+      archivePrefix={arXiv},
+      primaryClass={cs.AI},
+      url={https://arxiv.org/abs/2608.19880}, 
+}
+```
+
+This is not an officially supported Google product. This project is not eligible for the
+[Google Open Source Software Vulnerability Rewards Program](https://bughunters.google.com/open-source-security).

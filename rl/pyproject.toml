@@ -13,29 +13,18 @@
 # limitations under the License.
 
 [project]
-name = "envharness"
-version = "0.0.1"
-description = "Autogenous environment scaling through harness mutation"
-requires-python = ">=3.10"
+name = "envharness_rl"
+version = "0.1.0"
+description = "RL-training adapters (verl-agent GRPO) on top of release_version EnvHarness"
+requires-python = ">=3.12"
 dependencies = [
-    "pydantic>=2.0",
-    "pyyaml>=6.0",
-    "litellm>=1.50",
+    "gymnasium",
+    "ray",
 ]
-
-[project.optional-dependencies]
-dev = ["pytest>=7.0"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.packages.find]
-include = ["envharness*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-addopts = "-ra --strict-markers --strict-config"
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
+[tool.setuptools]
+packages = ["envharness_rl", "envharness_rl.alfworld"]
