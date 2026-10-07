@@ -58,11 +58,12 @@ import os
 from pathlib import Path
 
 CLIENT_FACTORY = "envharness.infra.llm:LiteLLMClient"
+LOCAL_TRANSFORMERS_FACTORY = "envharness.infra.llm:TransformersLocalClient"
 
 # Recognised litellm provider prefixes, in the form callers should use.
 PROVIDERS = (
     "gemini", "openai", "vertex_ai", "anthropic", "azure", "ollama",
-    "deepseek",
+    "deepseek", "local",
 )
 
 # Bare-name -> provider, longest prefix first so "gpt-" cannot shadow a more
@@ -194,7 +195,7 @@ def embedding_model(model: str | None = None) -> str:
     if override:
         return override
     provider, _ = split_model(model or "")
-    if provider in {"deepseek", "ollama"}:
+    if provider in {"deepseek", "ollama", "local"}:
         raise ValueError(
             f"model provider {provider!r} has no implicit embedding model; "
             "set EH_EMBED_MODEL before building or querying a reasoning bank"
@@ -492,6 +493,23 @@ def client_spec(model: str, *, apply_global_override: bool = True,
     The factory is the same for every provider; only the kwargs differ.
     Feed the pair straight into `PolicySpec` or `import_symbol(factory)(**kwargs)`.
     """
+    resolved = effective_model(model) if apply_global_override else model
+    provider, name = split_model(resolved)
+    if provider == "local":
+        configured_path = (
+            overrides.pop("model_path", None)
+            or os.environ.get("EH_LOCAL_MODEL_PATH")
+        )
+        model_path = configured_path or str(
+            Path(__file__).resolve().parents[2] / "models" / name
+        )
+        kwargs = {
+            "model_path": model_path,
+            "model_id": qualify(resolved),
+            **{key: value for key, value in overrides.items()
+               if value is not None},
+        }
+        return LOCAL_TRANSFORMERS_FACTORY, kwargs
     return CLIENT_FACTORY, client_kwargs(
         model, apply_global_override=apply_global_override, **overrides
     )
@@ -507,6 +525,14 @@ def completion_kwargs(model: str, *, temperature: float | None = None,
     provider with the same model string as the policy does.
     """
     model = effective_model(model)
+    provider, _ = split_model(model)
+    if provider == "local":
+        kwargs: dict = {"model": qualify(model)}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = int(max_tokens)
+        return kwargs
     kwargs = client_kwargs(model, **overrides)
     temperature, max_tokens = reconcile_call_params(
         model, temperature=temperature, max_tokens=max_tokens, params=kwargs,

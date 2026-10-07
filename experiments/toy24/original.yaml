@@ -18,7 +18,8 @@
 # comparing against the LLMMutator run in mutated.yaml.
 #
 # Setup:
-#   ollama list | grep qwen3:4b-direct
+#   hf download Qwen/Qwen3-4B-Instruct-2507 \
+#       --local-dir models/Qwen3-4B-Instruct-2507
 #   python scripts/run_harness.py --config experiments/toy24/original.yaml \
 #       --run-name toy24-original
 
@@ -32,7 +33,7 @@ mutator:
 policy:
   client_factory: envharness.infra.llm:LiteLLMClient
   client_kwargs:
-    model: ollama/qwen3:4b-direct
+    model: local/Qwen3-4B-Instruct-2507
   action_format: function_calling
 
 objective:
@@ -56,7 +57,9 @@ orchestrator:
   base_seed: 42
 
 runner:
-  type: subprocess
+  # Direct local weights are cached once in this process. A subprocess per
+  # rollout would reload all 4B parameters every time.
+  type: in_process
   timeout_seconds: 120
 
 storage:

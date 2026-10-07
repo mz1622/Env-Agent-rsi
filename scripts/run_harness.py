@@ -453,7 +453,7 @@ def main(argv=None):
                     "vertex_ai/claude-sonnet-4-6).")
     p.add_argument("--policy-model", type=str, default=None,
                     help="Override only the Policy/Target model (for example "
-                    "ollama/qwen3:4b-direct). Takes precedence over --model.")
+                    "local/Qwen3-4B-Instruct-2507). Takes precedence over --model.")
     p.add_argument("--agent-model", type=str, default=None,
                     help="Override only the HarnessAgent/Mutator model (for "
                     "example deepseek/deepseek-flash). Takes precedence over "

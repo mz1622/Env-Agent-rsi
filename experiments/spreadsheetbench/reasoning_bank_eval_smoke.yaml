@@ -34,7 +34,7 @@ eval:
   start_idx: 100
 model:
   max_response_tokens: 65535
-  name: ollama/qwen3:4b-direct
+  name: local/Qwen3-4B-Instruct-2507
   reasoning_effort: low
   temperature: 0.3
 policy:

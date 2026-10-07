@@ -12,12 +12,18 @@ from pathlib import Path
 
 import yaml
 
-from envharness.infra.model import api_key_for, client_kwargs
+from envharness.infra.llm import _parse_qwen_tool_calls
+from envharness.infra.model import (
+    api_key_for,
+    client_kwargs,
+    client_spec,
+    completion_kwargs,
+)
 from scripts.run_harness import _apply_model_overrides, _client_from_block
 
 
 ROOT = Path(__file__).resolve().parents[1]
-POLICY_MODEL = "ollama/qwen3:4b-direct"
+POLICY_MODEL = "local/Qwen3-4B-Instruct-2507"
 AGENT_MODEL = "deepseek/deepseek-flash"
 
 
@@ -38,12 +44,34 @@ def test_deepseek_key_file_and_provider_defaults(tmp_path, monkeypatch) -> None:
 
 def test_local_qwen_provider_defaults(monkeypatch) -> None:
     monkeypatch.delenv("EH_MODEL", raising=False)
-    resolved = client_kwargs(POLICY_MODEL)
-    assert resolved == {
+    monkeypatch.delenv("EH_LOCAL_MODEL_PATH", raising=False)
+    factory, resolved = client_spec(POLICY_MODEL)
+    assert factory == "envharness.infra.llm:TransformersLocalClient"
+    assert resolved["model_id"] == POLICY_MODEL
+    assert resolved["model_path"].endswith("models/Qwen3-4B-Instruct-2507")
+    assert "api_base" not in resolved
+    assert "api_key" not in resolved
+
+
+def test_local_qwen_completion_avoids_litellm_transport() -> None:
+    assert completion_kwargs(
+        POLICY_MODEL, temperature=0.2, max_tokens=128,
+    ) == {
         "model": POLICY_MODEL,
-        "drop_params": True,
-        "api_base": "http://127.0.0.1:11434",
+        "temperature": 0.2,
+        "max_tokens": 128,
     }
+
+
+def test_qwen_native_tool_call_parser() -> None:
+    content, calls = _parse_qwen_tool_calls(
+        'before\n<tool_call>\n{"name":"add","arguments":{"a":2,"b":3}}'
+        '\n</tool_call>\nafter'
+    )
+    assert content == "before\n\nafter"
+    assert [(call.name, call.arguments) for call in calls] == [
+        ("add", {"a": 2, "b": 3}),
+    ]
 
 
 def test_role_overrides_take_precedence_over_shared_model() -> None:
@@ -90,7 +118,10 @@ def test_explicit_cli_choice_can_ignore_legacy_global_override(monkeypatch) -> N
     _, agent_kwargs = _client_from_block(
         cfg["agent"], apply_global_override=False
     )
-    assert policy_kwargs["model"] == POLICY_MODEL
+    assert policy_kwargs["model_id"] == POLICY_MODEL
+    assert policy_kwargs["model_path"].endswith(
+        "models/Qwen3-4B-Instruct-2507"
+    )
     assert agent_kwargs["model"] == AGENT_MODEL
 
 

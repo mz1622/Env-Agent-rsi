@@ -53,7 +53,8 @@ def _install_litellm_dispatcher(rb_chat_api) -> None:
     global _LITELLM_PATCHED
     if _LITELLM_PATCHED:
         return
-    import litellm as _litellm
+    from envharness.infra.llm import completion_with_retry
+    from envharness.infra.model import completion_kwargs
     from typing import Any, List
     from langchain_core.language_models.chat_models import SimpleChatModel
     from langchain_core.messages import BaseMessage
@@ -88,10 +89,14 @@ def _install_litellm_dispatcher(rb_chat_api) -> None:
         def _call(self, messages, stop=None, run_manager=None, **kw):
             for attempt in range(self.n_retry_server):
                 try:
-                    r = _litellm.completion(
-                        model=self._model, messages=_to_litellm(messages),
-                        temperature=self._temperature, max_tokens=self._max_tokens,
-                        drop_params=True)
+                    r = completion_with_retry(
+                        messages=_to_litellm(messages),
+                        **completion_kwargs(
+                            self._model,
+                            temperature=self._temperature,
+                            max_tokens=self._max_tokens,
+                        ),
+                    )
                     return r.choices[0].message.content or ""
                 except Exception as e:
                     if attempt == self.n_retry_server - 1:

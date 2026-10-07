@@ -86,7 +86,7 @@ ROOT = Path(__file__).resolve().parents[2]          # repo root
 # the driver, so activating your env is enough.
 PY = os.environ.get("PY") or sys.executable
 
-POLICY_MODEL = os.environ.get("POLICY_MODEL", "ollama/qwen3:4b-direct")
+POLICY_MODEL = os.environ.get("POLICY_MODEL", "local/Qwen3-4B-Instruct-2507")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "deepseek/deepseek-flash")
 INDUCTION_MODEL = os.environ.get("INDUCTION_MODEL", AGENT_MODEL)
 

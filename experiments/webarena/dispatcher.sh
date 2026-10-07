@@ -30,7 +30,7 @@ ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 PY=${WEBARENA_PYTHON:-$(command -v python3 || command -v python)}
 WORKER="$ROOT/experiments/webarena/worker.py"
 
-POLICY_MODEL=${POLICY_MODEL:-ollama/qwen3:4b-direct}
+POLICY_MODEL=${POLICY_MODEL:-local/Qwen3-4B-Instruct-2507}
 
 # Container pools
 declare -A CONTAINERS URLS

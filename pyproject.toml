@@ -25,6 +25,12 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0"]
+local-qwen = [
+    "torch>=2.4",
+    "transformers>=4.51",
+    "accelerate>=1.0",
+    "huggingface_hub>=0.26",
+]
 
 [build-system]
 requires = ["setuptools>=68"]

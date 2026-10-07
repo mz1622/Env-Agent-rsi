@@ -78,7 +78,7 @@ def need_keys() -> None:
     """Check the split local-Policy and remote-HarnessAgent profile."""
     from envharness.infra.model import (key_pool, missing_key_message,
                                         split_model)
-    policy_model = os.environ.get("POLICY_MODEL", "ollama/qwen3:4b-direct")
+    policy_model = os.environ.get("POLICY_MODEL", "local/Qwen3-4B-Instruct-2507")
     agent_model = os.environ.get("AGENT_MODEL", "deepseek/deepseek-flash")
     provider, _ = split_model(agent_model)
     missing = missing_key_message(agent_model)
@@ -90,27 +90,31 @@ def need_keys() -> None:
         ok(f"HarnessAgent {agent_model}: {len(key_pool(agent_model))} key(s) available")
 
     policy_provider, policy_name = split_model(policy_model)
-    if policy_provider == "ollama":
-        try:
-            import json
-            import urllib.request
-            with urllib.request.urlopen(
-                "http://127.0.0.1:11434/api/tags", timeout=3
-            ) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-            names = {str(item.get("name", "")) for item in payload.get("models", [])}
-            if policy_name in names:
-                ok(f"Policy {policy_model}: local Ollama model available")
-            else:
-                fail(
-                    f"Policy {policy_model}: model not installed",
-                    f"ollama pull {policy_name}",
-                )
-        except Exception as exc:
+    if policy_provider == "local":
+        configured = os.environ.get("EH_LOCAL_MODEL_PATH")
+        model_path = (Path(configured).expanduser() if configured else
+                      ROOT / "models" / policy_name)
+        missing_files = [
+            name for name in ("config.json", "tokenizer_config.json",
+                              "model.safetensors.index.json")
+            if not (model_path / name).is_file()
+        ]
+        if missing_files:
             fail(
-                f"Policy {policy_model}: Ollama unavailable ({type(exc).__name__})",
-                "start Ollama on http://127.0.0.1:11434",
+                f"Policy {policy_model}: incomplete local model at {model_path}",
+                "hf download Qwen/Qwen3-4B-Instruct-2507 "
+                "--local-dir models/Qwen3-4B-Instruct-2507",
             )
+        else:
+            try:
+                import torch  # noqa: F401
+                import transformers  # noqa: F401
+                ok(f"Policy {policy_model}: direct Transformers model available")
+            except Exception as exc:
+                fail(
+                    f"local inference dependency missing: {type(exc).__name__}",
+                    "python -m pip install -e '.[local-qwen]'",
+                )
     else:
         policy_missing = missing_key_message(policy_model)
         if policy_missing:
@@ -194,7 +198,7 @@ def check_webarena(stack: bool = True) -> None:
     try:
         sys.path.insert(0, str(ROOT))
         from envharness.prompts.webarena_reasoning_bank_agent import build_reasoning_bank_agent
-        build_reasoning_bank_agent(model_name="litellm/ollama/qwen3:4b-direct",
+        build_reasoning_bank_agent(model_name="litellm/local/Qwen3-4B-Instruct-2507",
                        temperature=0.7, max_tokens=64)
         ok("reasoning_bank_agent GenericAgent builds")
     except Exception as e:

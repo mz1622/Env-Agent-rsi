@@ -117,7 +117,7 @@ mutator:
 policy:
   client_factory: envharness.infra.llm:LiteLLMClient
   client_kwargs:
-    model: ollama/qwen3:4b-direct
+    model: local/Qwen3-4B-Instruct-2507
     reasoning_effort: minimal   # suppress heavy thinking; much faster per turn
   action_format: think_action
   max_history: 200                       # long episodes truncate early turns
@@ -204,7 +204,7 @@ orchestrator:
   mutator_baseline_mode: full
 
 runner:
-  type: subprocess
+  type: in_process
   timeout_seconds: 2400
 
 storage:

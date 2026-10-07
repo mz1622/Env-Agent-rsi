@@ -54,7 +54,7 @@ Environment::
     EVAL_START_SEEDS   comma-separated, default "0,1000,2000"; one eval
                        round runs per start seed
     EVAL_CONCURRENCY   eval inner concurrency, default 24
-    POLICY_MODEL       Policy/eval model (default ollama/qwen3:4b-direct)
+    POLICY_MODEL       Policy/eval model (default local/Qwen3-4B-Instruct-2507)
     AGENT_MODEL        HarnessAgent model (default deepseek/deepseek-flash)
     INDUCTION_MODEL    skill induction model (default AGENT_MODEL)
 
@@ -84,7 +84,7 @@ os.chdir(ROOT)
 # the driver, so activating your env is enough.
 PY = os.environ.get("PY") or sys.executable
 
-POLICY_MODEL = os.environ.get("POLICY_MODEL", "ollama/qwen3:4b-direct")
+POLICY_MODEL = os.environ.get("POLICY_MODEL", "local/Qwen3-4B-Instruct-2507")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "deepseek/deepseek-flash")
 INDUCTION_MODEL = os.environ.get("INDUCTION_MODEL", AGENT_MODEL)
 

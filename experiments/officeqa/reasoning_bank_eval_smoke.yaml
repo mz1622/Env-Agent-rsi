@@ -15,7 +15,7 @@
 # OfficeQA eval -- reduced-scale variant of reasoning_bank_eval.yaml.
 
 model:
-  name: ollama/qwen3:4b-direct
+  name: local/Qwen3-4B-Instruct-2507
   temperature: 0.3
   reasoning_effort: low
   max_response_tokens: 65535    # 3.5-flash reasons verbosely; a low cap truncates turns

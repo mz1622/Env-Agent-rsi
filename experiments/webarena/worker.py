@@ -129,7 +129,7 @@ def _install_litellm_dispatcher(rb_chat_api) -> None:
     global _LITELLM_PATCHED
     if _LITELLM_PATCHED:
         return
-    import litellm as _litellm
+    from envharness.infra.llm import completion_with_retry
     from typing import Any, List, Optional
     from langchain_core.language_models.chat_models import SimpleChatModel
     from langchain_core.messages import BaseMessage
@@ -166,7 +166,7 @@ def _install_litellm_dispatcher(rb_chat_api) -> None:
             from envharness.infra.model import completion_kwargs
             for attempt in range(self.n_retry_server):
                 try:
-                    r = _litellm.completion(
+                    r = completion_with_retry(
                         messages=_to_litellm(messages),
                         **completion_kwargs(self._model,
                                             temperature=self._temperature,
@@ -345,7 +345,7 @@ def main():
     p.add_argument("--bank", default=None)
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--max-steps", type=int, default=30)
-    p.add_argument("--model", default="litellm/ollama/qwen3:4b-direct")
+    p.add_argument("--model", default="litellm/local/Qwen3-4B-Instruct-2507")
     p.add_argument("--temperature", type=float, default=0.7)
     p.add_argument("--max-response-tokens", type=int, default=65536)
     p.add_argument("--out", required=True)

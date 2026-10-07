@@ -35,6 +35,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import threading
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -84,6 +86,80 @@ def completion_with_retry(*, max_retries: int = 6,
     PLACE with exponential backoff -- an API hiccup must not be recorded as
     an episode failure. Fatal errors (auth / bad request) raise on the
     first attempt. Total worst-case wait at the defaults: ~2 minutes."""
+    model_name = str(completion_kwargs.get("model") or "")
+    if model_name.startswith("local/"):
+        from types import SimpleNamespace
+        from envharness.infra.model import build_client
+
+        payload = dict(completion_kwargs)
+        payload.pop("model", None)
+        raw_messages = payload.pop("messages", [])
+        tools = payload.pop("tools", None)
+        tool_choice = payload.pop("tool_choice", "auto")
+        temperature = payload.pop("temperature", 0.7)
+        max_tokens = payload.pop("max_tokens", None)
+        messages: list[Message] = []
+        for item in raw_messages:
+            calls = []
+            for call in item.get("tool_calls") or []:
+                function = call.get("function") or call
+                arguments = function.get("arguments") or {}
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = {"_raw": arguments}
+                calls.append(ToolCall(
+                    id=call.get("id") or f"history-{len(calls) + 1}",
+                    name=function.get("name") or "",
+                    arguments=arguments,
+                ))
+            messages.append(Message(
+                role=item.get("role", "user"),
+                content=item.get("content") or "",
+                tool_calls=calls or None,
+                tool_call_id=item.get("tool_call_id"),
+                name=item.get("name"),
+            ))
+        client = build_client(model_name)
+        response = client.chat(
+            messages,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            **payload,
+        )
+
+        compat_calls = []
+        for call in response.tool_calls:
+            function = SimpleNamespace(
+                name=call.name,
+                arguments=json.dumps(call.arguments, ensure_ascii=False),
+            )
+            dumped = {
+                "id": call.id,
+                "type": "function",
+                "function": {
+                    "name": call.name,
+                    "arguments": function.arguments,
+                },
+            }
+            compat_calls.append(SimpleNamespace(
+                id=call.id,
+                type="function",
+                function=function,
+                model_dump=lambda value=dumped: value,
+            ))
+        message = SimpleNamespace(
+            content=response.content,
+            tool_calls=compat_calls,
+        )
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=message)],
+            raw=response.raw,
+        )
+
     import litellm
     transient: tuple = ()
     for name in ("APIConnectionError", "RateLimitError",
@@ -226,6 +302,195 @@ class LiteLLMClient(LLMClient):
                     args = {"_raw": args}
             tcalls.append(ToolCall(id=tc.id, name=tc.function.name, arguments=args))
         return ChatResponse(content=choice.content or "", tool_calls=tcalls, raw=resp)
+
+
+# ---------------------------------------------------------------------------
+# Direct local Transformers backend
+# ---------------------------------------------------------------------------
+
+_LOCAL_TRANSFORMERS_CACHE: dict[str, tuple[Any, Any, str]] = {}
+_LOCAL_TRANSFORMERS_CACHE_LOCK = threading.Lock()
+_LOCAL_TRANSFORMERS_GENERATION_LOCKS: dict[str, threading.Lock] = {}
+_QWEN_TOOL_CALL_RE = re.compile(
+    r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL,
+)
+
+
+def _parse_qwen_tool_calls(text: str) -> tuple[str, list[ToolCall]]:
+    """Parse Qwen's native ``<tool_call>{...}</tool_call>`` responses."""
+
+    calls: list[ToolCall] = []
+    for index, match in enumerate(_QWEN_TOOL_CALL_RE.finditer(text or ""), 1):
+        try:
+            payload = json.loads(match.group(1))
+        except json.JSONDecodeError:
+            continue
+        name = payload.get("name")
+        arguments = payload.get("arguments", {})
+        if not isinstance(name, str) or not name:
+            continue
+        if isinstance(arguments, str):
+            try:
+                arguments = json.loads(arguments)
+            except json.JSONDecodeError:
+                arguments = {"_raw": arguments}
+        if not isinstance(arguments, dict):
+            arguments = {"_raw": arguments}
+        calls.append(ToolCall(
+            id=f"local-qwen-{index}", name=name, arguments=arguments,
+        ))
+    content = _QWEN_TOOL_CALL_RE.sub("", text or "").strip()
+    return content, calls
+
+
+class TransformersLocalClient(LLMClient):
+    """Load a Hugging Face causal LM directly in this Python process.
+
+    This backend performs no HTTP request and does not require Ollama, vLLM,
+    or an API key. Model/tokenizer objects are cached by resolved filesystem
+    path, so repeated rollouts under :class:`InProcessRunner` reuse one copy of
+    the weights. Generation for one cached model is serialized because the
+    Transformers ``generate`` path and MPS buffers are not thread-safe.
+
+    Qwen's tokenizer chat template receives the framework's OpenAI-style tool
+    schemas directly. Native ``<tool_call>`` blocks are parsed back into the
+    common :class:`ToolCall` representation.
+    """
+
+    def __init__(
+        self,
+        model_path: str,
+        model_id: str = "local/Qwen3-4B-Instruct-2507",
+        device: str = "auto",
+        dtype: str = "auto",
+        default_max_tokens: int = 8192,
+        max_input_tokens: int | None = None,
+        top_p: float = 0.95,
+        top_k: int = 20,
+        repetition_penalty: float = 1.0,
+        local_files_only: bool = True,
+        **defaults,
+    ):
+        path = Path(model_path).expanduser()
+        if not path.is_absolute():
+            path = (Path(__file__).resolve().parents[2] / path).resolve()
+        if not path.exists():
+            raise FileNotFoundError(
+                f"local model directory does not exist: {path}. "
+                "Run `hf download Qwen/Qwen3-4B-Instruct-2507 "
+                "--local-dir models/Qwen3-4B-Instruct-2507`."
+            )
+        self.model_path = str(path)
+        self.model_id = model_id
+        self.device = device
+        self.dtype = dtype
+        self.default_max_tokens = int(default_max_tokens)
+        self.max_input_tokens = (
+            int(max_input_tokens) if max_input_tokens is not None else None
+        )
+        self.top_p = float(top_p)
+        self.top_k = int(top_k)
+        self.repetition_penalty = float(repetition_penalty)
+        self.local_files_only = bool(local_files_only)
+        self.defaults = defaults
+
+    def _load(self):
+        cache_key = self.model_path
+        with _LOCAL_TRANSFORMERS_CACHE_LOCK:
+            cached = _LOCAL_TRANSFORMERS_CACHE.get(cache_key)
+            if cached is not None:
+                return cached
+
+            import torch
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+
+            if self.device == "auto":
+                if torch.backends.mps.is_available():
+                    resolved_device = "mps"
+                elif torch.cuda.is_available():
+                    resolved_device = "cuda"
+                else:
+                    resolved_device = "cpu"
+            else:
+                resolved_device = self.device
+
+            dtype_map = {
+                "auto": "auto",
+                "float32": torch.float32,
+                "float16": torch.float16,
+                "bfloat16": torch.bfloat16,
+            }
+            if self.dtype not in dtype_map:
+                raise ValueError(
+                    "dtype must be auto, float32, float16, or bfloat16; "
+                    f"got {self.dtype!r}"
+                )
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.model_path,
+                local_files_only=self.local_files_only,
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                self.model_path,
+                dtype=dtype_map[self.dtype],
+                local_files_only=self.local_files_only,
+                low_cpu_mem_usage=True,
+            )
+            model.to(resolved_device)
+            model.eval()
+            cached = (tokenizer, model, resolved_device)
+            _LOCAL_TRANSFORMERS_CACHE[cache_key] = cached
+            _LOCAL_TRANSFORMERS_GENERATION_LOCKS[cache_key] = threading.Lock()
+            return cached
+
+    def chat(self, messages, tools=None, tool_choice="auto",
+             temperature=0.7, max_tokens=None, **kwargs):
+        import torch
+
+        tokenizer, model, device = self._load()
+        rendered = tokenizer.apply_chat_template(
+            [_message_to_dict(message) for message in messages],
+            tools=tools or None,
+            add_generation_prompt=True,
+            tokenize=False,
+        )
+        token_kwargs: dict[str, Any] = {"return_tensors": "pt"}
+        if self.max_input_tokens is not None:
+            token_kwargs.update({
+                "truncation": True,
+                "max_length": self.max_input_tokens,
+            })
+        inputs = tokenizer(rendered, **token_kwargs).to(device)
+
+        limit = int(max_tokens) if max_tokens is not None else self.default_max_tokens
+        params = {**self.defaults, **kwargs}
+        params.pop("temperature", None)
+        params.pop("max_tokens", None)
+        do_sample = temperature is not None and float(temperature) > 0
+        generation_kwargs: dict[str, Any] = {
+            "max_new_tokens": limit,
+            "do_sample": do_sample,
+            "repetition_penalty": self.repetition_penalty,
+            "pad_token_id": tokenizer.eos_token_id,
+            **params,
+        }
+        if do_sample:
+            generation_kwargs.update({
+                "temperature": float(temperature),
+                "top_p": self.top_p,
+                "top_k": self.top_k,
+            })
+
+        lock = _LOCAL_TRANSFORMERS_GENERATION_LOCKS[self.model_path]
+        with lock, torch.inference_mode():
+            generated = model.generate(**inputs, **generation_kwargs)
+        output_ids = generated[0, inputs["input_ids"].shape[1]:]
+        text = tokenizer.decode(output_ids, skip_special_tokens=True)
+        content, tool_calls = _parse_qwen_tool_calls(text)
+        return ChatResponse(
+            content=content,
+            tool_calls=tool_calls,
+            raw={"text": text, "model_path": self.model_path},
+        )
 
 
 # ---------------------------------------------------------------------------

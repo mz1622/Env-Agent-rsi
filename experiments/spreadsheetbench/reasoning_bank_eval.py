@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from envharness.infra.model import completion_kwargs
 from envharness.infra.model import key_env, key_pool, missing_key_message
+from envharness.infra.llm import completion_with_retry
 
 import argparse
 import concurrent.futures as cf
@@ -64,7 +65,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-import litellm
 import yaml
 
 from envharness.bridges.spreadsheetbench.bridge import SpreadsheetBenchEnv
@@ -198,7 +198,7 @@ def run_episode(*, cfg: dict, bank: Bank | None, seed: int,
                     _extra = {}
                     if cfg["model"].get("reasoning_effort"):
                         _extra["reasoning_effort"] = cfg["model"]["reasoning_effort"]
-                    r = litellm.completion(
+                    r = completion_with_retry(
                         messages=messages, tools=tools, tool_choice="auto",
                         **completion_kwargs(
                             cfg["model"]["name"],

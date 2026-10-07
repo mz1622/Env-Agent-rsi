@@ -84,7 +84,7 @@ os.chdir(ROOT)
 PY = os.environ.get("WEBARENA_PYTHON") or sys.executable
 EXPDIR = ROOT / "experiments" / "webarena"
 
-POLICY_MODEL = os.environ.get("POLICY_MODEL", "ollama/qwen3:4b-direct")
+POLICY_MODEL = os.environ.get("POLICY_MODEL", "local/Qwen3-4B-Instruct-2507")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "deepseek/deepseek-flash")
 INDUCTION_MODEL = os.environ.get("INDUCTION_MODEL", AGENT_MODEL)
 

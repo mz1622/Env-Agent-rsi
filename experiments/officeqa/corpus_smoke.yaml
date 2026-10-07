@@ -177,7 +177,7 @@ agent:
 policy:
   client_factory: envharness.infra.llm:LiteLLMClient
   client_kwargs:
-    model: ollama/qwen3:4b-direct
+    model: local/Qwen3-4B-Instruct-2507
     reasoning_effort: low
   action_format: function_calling
   max_history: 60
@@ -242,7 +242,7 @@ orchestrator:
   skip_passthrough_candidates: true  # honor "emit empty Candidate to skip easy tasks"
 
 runner:
-  type: subprocess
+  type: in_process
   timeout_seconds: 700
 
 storage:

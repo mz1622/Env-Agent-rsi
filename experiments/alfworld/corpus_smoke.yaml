@@ -89,7 +89,7 @@ agent:
 policy:
   client_factory: envharness.infra.llm:LiteLLMClient
   client_kwargs:
-    model: ollama/qwen3:4b-direct
+    model: local/Qwen3-4B-Instruct-2507
   action_format: think_action
   max_history: 200
   temperature: 0.5
@@ -129,7 +129,7 @@ orchestrator:
                                      # without this the K pass-through rollouts still run per skipped task
 
 runner:
-  type: subprocess
+  type: in_process
   timeout_seconds: 500
 
 storage:

@@ -69,16 +69,23 @@ and repeating the designer loop compounds the gains round after round.
 
 This fork uses two deliberately separate model roles by default:
 
-- **Policy / Target Agent:** local Ollama `qwen3:4b-direct` at
-  `http://127.0.0.1:11434`.
+- **Policy / Target Agent:** official Hugging Face
+  `Qwen/Qwen3-4B-Instruct-2507`, loaded directly by Python/Transformers from
+  `models/Qwen3-4B-Instruct-2507`. No Ollama or local HTTP server is used.
 - **HarnessAgent / Mutator (Env Rigger):** DeepSeek API
   `deepseek/deepseek-flash` at `https://api.deepseek.com`.
 
-Start Ollama and verify the local model:
+Install the local-model dependencies and download the weights once:
 
 ```bash
-ollama list | grep qwen3:4b-direct
+python -m pip install -e '.[local-qwen]'
+hf download Qwen/Qwen3-4B-Instruct-2507 \
+  --local-dir models/Qwen3-4B-Instruct-2507
 ```
+
+Set `EH_LOCAL_MODEL_PATH` only when the weights live somewhere else. The
+default `models/` directory is gitignored. The direct client caps each response
+at 8192 new tokens; generation stops earlier when the model emits EOS.
 
 DeepSeek credentials are resolved in this order: `DEEPSEEK_API_KEY`,
 `DEEPSEEK_API_KEYS`, then the file named by `EH_DEEPSEEK_API_KEY_FILE`. With no
@@ -94,7 +101,7 @@ Every corpus YAML in `experiments/` keeps the two roles explicit:
 
 ```yaml
 policy:
-  model: ollama/qwen3:4b-direct
+  model: local/Qwen3-4B-Instruct-2507
 agent:  # some legacy configs call this block `mutator`
   type: llm
   model: deepseek/deepseek-flash
@@ -104,7 +111,7 @@ Override roles independently when needed:
 
 ```bash
 python scripts/run_harness.py --config experiments/toy24/mutated_smoke.yaml \
-  --policy-model ollama/qwen3:4b-direct \
+  --policy-model local/Qwen3-4B-Instruct-2507 \
   --agent-model deepseek/deepseek-flash
 ```
 
@@ -113,19 +120,18 @@ intentionally override **both** roles. Do not use them for the default split
 setup. Full reproduction drivers expose `POLICY_MODEL`, `AGENT_MODEL`, and
 `INDUCTION_MODEL` separately.
 
-**Concurrency follows your rate limit, not your CPU.** Every benchmark runs
-its tasks through a pool of workers (`CORPUS_WORKERS`, `EVAL_WORKERS`,
-`EVAL_CONCURRENCY`, ... -- see each benchmark's README). The defaults suit a
-modest quota; a pool large enough to saturate your provider's tokens-per-minute
-tier turns into 429s that truncate episodes mid-task, which shows up as
-unexpectedly low success rates rather than as an error. Raise the pool when
-your quota allows, and on Gemini give it several keys (`GEMINI_API_KEYS`) --
-that quota is metered per key, so the workers spread across them.
+The direct local Qwen backend keeps one cached model per Python process and
+serializes generation on that model. Corpus configs therefore use the
+in-process runner: K environments may exist concurrently, but they share one
+copy of the 4B weights instead of loading one copy per subprocess. Remote
+HarnessAgent concurrency still follows the provider's rate limit; a pool large
+enough to saturate its tokens-per-minute tier turns into 429s that truncate
+episodes mid-task.
 
 #### Embeddings
 
 Skill retrieval needs an embedding model too. OpenAI, Vertex and Gemini have
-paired defaults. DeepSeek chat and the local Ollama Policy do not imply a
+paired defaults. DeepSeek chat and the local Transformers Policy do not imply a
 compatible embedding space, so set `EH_EMBED_MODEL` explicitly before building
 or querying reasoning banks.
 
@@ -134,7 +140,7 @@ or querying reasoning banks.
 | `openai/...` | `openai/text-embedding-3-small` | 1536 |
 | `vertex_ai/...` | `vertex_ai/text-embedding-004` (same ADC) | 768 |
 | `gemini/...` | `gemini/gemini-embedding-001` | 3072 |
-| `deepseek/...` or `ollama/...` | set `EH_EMBED_MODEL` explicitly | provider-dependent |
+| `deepseek/...`, `local/...` or `ollama/...` | set `EH_EMBED_MODEL` explicitly | provider-dependent |
 
 `EH_EMBED_MODEL` overrides the pairing for both bank building and retrieval,
 and takes any embedding model litellm supports (with that provider's own

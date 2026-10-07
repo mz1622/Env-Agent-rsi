@@ -55,7 +55,7 @@ mutator:
 policy:
   client_factory: envharness.infra.llm:LiteLLMClient
   client_kwargs:
-    model: ollama/qwen3:4b-direct
+    model: local/Qwen3-4B-Instruct-2507
   action_format: webarena_rb
   temperature: 0.7
   prompt_builder_kwargs:
@@ -93,7 +93,7 @@ orchestrator:
   baseline_cache_dir: null
 
 runner:
-  type: subprocess
+  type: in_process
   timeout_seconds: 900
 
 storage:

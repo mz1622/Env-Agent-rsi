@@ -85,7 +85,7 @@ from envharness.infra.model import key_env, key_pool, missing_key_message, pool_
 ROOT = Path(__file__).resolve().parents[2]           # repo root
 EXP = "experiments/officeqa"
 PY = sys.executable
-POLICY_MODEL = os.environ.get("POLICY_MODEL", "ollama/qwen3:4b-direct")
+POLICY_MODEL = os.environ.get("POLICY_MODEL", "local/Qwen3-4B-Instruct-2507")
 AGENT_MODEL = os.environ.get("AGENT_MODEL", "deepseek/deepseek-flash")
 INDUCTION_MODEL = os.environ.get("INDUCTION_MODEL", AGENT_MODEL)
 
