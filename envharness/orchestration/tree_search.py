@@ -27,9 +27,29 @@ from typing import Any, Literal, Protocol
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from envharness.core.types import Candidate, ObjectiveSignal, Trace
+from envharness.orchestration.objectives import TargetSuccessRate
 
 
 ChangeKind = Literal["stage", "f_A", "f_T", "f_O"]
+
+
+def _node_value(node: "EnvironmentNode",
+                objective: TargetSuccessRate | None) -> float:
+    if objective is None:
+        return node.validation.success_rate
+    validation = node.validation
+    if validation.n_errors or validation.n_rollouts != objective.window:
+        return -1.0
+    return objective.score_for_rate(validation.n_success / validation.n_rollouts)
+
+
+def _best_node_key(node: "EnvironmentNode",
+                   objective: TargetSuccessRate | None) -> tuple:
+    if objective is not None:
+        # Equal distances on either side of the target are genuine ties.
+        return (-_node_value(node, objective), node.depth, node.node_id)
+    return (-node.validation.success_rate, -node.validation.avg_reward,
+            node.depth, node.node_id)
 
 
 class ValidationSummary(BaseModel):
@@ -292,10 +312,11 @@ class ExternalTreePolicy(Protocol):
 class EnvironmentTree:
     """Minimal validated node store; contains no selection/return algorithm."""
 
-    def __init__(self):
+    def __init__(self, objective: TargetSuccessRate | None = None):
         self._nodes: dict[str, EnvironmentNode] = {}
         self._traces: dict[str, list[Trace]] = {}
         self._root_node_id: str | None = None
+        self.objective = objective
 
     def add(self, submission: NodeSubmission) -> None:
         node = submission.node
@@ -337,7 +358,7 @@ class EnvironmentTree:
         )
 
     def best_validated_node_id(self) -> str:
-        """Return the best node under the current success-rate objective.
+        """Return the best node under the configured tree objective.
 
         This is a budget-boundary fallback, not a search-policy ``stop``
         decision.  A shallower node wins exact ties so the root remains the
@@ -345,14 +366,15 @@ class EnvironmentTree:
         """
         if self._root_node_id is None:
             raise ValueError("tree has no root")
+        nodes = list(self._nodes.values())
+        if self.objective is not None:
+            nodes = [node for node in nodes
+                     if node.validation.n_errors == 0
+                     and node.validation.n_rollouts == self.objective.window]
+            if not nodes:
+                raise ValueError("tree has no valid target-rate node")
         return min(
-            self._nodes.values(),
-            key=lambda node: (
-                -node.validation.success_rate,
-                -node.validation.avg_reward,
-                node.depth,
-                node.node_id,
-            ),
+            nodes, key=lambda node: _best_node_key(node, self.objective),
         ).node_id
 
 
@@ -430,19 +452,20 @@ class UniformPUCTPolicy:
 
     Each proposal is retained as a deferred edge.  It becomes a child only
     after the coordinator applies it and returns a validated
-    :class:`EnvironmentNode`.  A newly validated leaf backs up its cumulative
-    success-rate change from the root.  That return is the sum of the direct
-    parent/child success-rate deltas along the path, so PUCT can prefer a
-    multi-step improvement rather than only a locally positive first change.
+    :class:`EnvironmentNode`. A newly validated leaf backs up its cumulative
+    value change from the root. The value is success rate by default, or
+    proximity to the requested target success rate when configured.
 
     ``next_command`` returns ``action='stop'`` when no deferred proposal is
     reachable, selecting the best already validated environment.
     """
 
-    def __init__(self, c_puct: float = 1.0):
+    def __init__(self, c_puct: float = 1.0,
+                 objective: TargetSuccessRate | None = None):
         if not isfinite(c_puct) or c_puct < 0:
             raise ValueError("c_puct must be a finite value >= 0")
         self.c_puct = float(c_puct)
+        self.objective = objective
         self._root_node_id: str | None = None
         self._nodes: dict[str, EnvironmentNode] = {}
         self._node_stats: dict[str, PUCTNodeStats] = {}
@@ -531,14 +554,15 @@ class UniformPUCTPolicy:
 
         edge = self._select_deferred_edge()
         if edge is None:
+            nodes = list(snapshot.nodes)
+            if self.objective is not None:
+                nodes = [node for node in nodes
+                         if node.validation.n_errors == 0
+                         and node.validation.n_rollouts == self.objective.window]
+                if not nodes:
+                    raise ValueError("tree has no valid target-rate node")
             best = min(
-                snapshot.nodes,
-                key=lambda node: (
-                    -node.validation.success_rate,
-                    -node.validation.avg_reward,
-                    node.depth,
-                    node.node_id,
-                ),
+                nodes, key=lambda node: _best_node_key(node, self.objective),
             )
             return SearchCommand(
                 action="stop",
@@ -570,9 +594,9 @@ class UniformPUCTPolicy:
     def _backpropagate(self, leaf_node_id: str) -> None:
         if self._root_node_id is None:
             raise ValueError("cannot backpropagate without a root")
-        root_rate = self._nodes[self._root_node_id].validation.success_rate
-        leaf_rate = self._nodes[leaf_node_id].validation.success_rate
-        g = leaf_rate - root_rate
+        root_value = _node_value(self._nodes[self._root_node_id], self.objective)
+        leaf_value = _node_value(self._nodes[leaf_node_id], self.objective)
+        g = leaf_value - root_value
 
         current_id = leaf_node_id
         while True:
@@ -666,19 +690,70 @@ class ExternalSearchCoordinator:
         self,
         runtime: EnvironmentEvolutionRuntime,
         external_policy: ExternalTreePolicy | None = None,
+        objective: TargetSuccessRate | None = None,
     ):
         self.runtime = runtime
-        self.external_policy = external_policy or UniformPUCTPolicy()
-        self.tree = EnvironmentTree()
+        runtime_objective = getattr(getattr(runtime, "orchestrator", None),
+                                    "objective", None)
+        configured = objective
+        if configured is None and isinstance(external_policy, UniformPUCTPolicy):
+            configured = external_policy.objective
+        if configured is None:
+            configured = runtime_objective
+        if isinstance(configured, TargetSuccessRate) and runtime_objective is not None:
+            if (not isinstance(runtime_objective, TargetSuccessRate)
+                    or (configured.target, configured.window) !=
+                    (runtime_objective.target, runtime_objective.window)):
+                raise ValueError(
+                    "MCTS target_success_rate must match the runtime objective"
+                )
+        # Existing objectives and configurations retain their original tree
+        # behavior. Only the explicit target-rate objective changes MCTS.
+        self.objective = (configured if isinstance(configured, TargetSuccessRate)
+                          else None)
+        self.external_policy = external_policy or UniformPUCTPolicy(
+            objective=self.objective,
+        )
+        if isinstance(self.external_policy, UniformPUCTPolicy):
+            self.external_policy.objective = self.objective
+        self.tree = EnvironmentTree(objective=self.objective)
         self.proposals = ProposalCatalog()
+
+    def _target_reached(self, node: EnvironmentNode) -> bool:
+        objective = self.objective
+        validation = node.validation
+        return (
+            objective is not None
+            and validation.n_errors == 0
+            and validation.n_rollouts == objective.window
+            and validation.n_success / validation.n_rollouts == objective.target
+        )
+
+    def _target_result(self) -> SearchRunResult:
+        snapshot = self.tree.snapshot()
+        return SearchRunResult(
+            best_node_id=self.tree.best_validated_node_id(),
+            root_node_id=snapshot.root_node_id,
+            expansion_count=snapshot.expansion_count,
+            stop_rationale="target success count reached",
+            snapshot=snapshot,
+        )
 
     def run(self, max_expansions: int) -> SearchRunResult:
         if max_expansions < 0:
             raise ValueError("max_expansions must be >= 0")
 
         root = self.runtime.create_root()
+        if (self.objective is not None
+                and root.node.validation.n_rollouts != self.objective.window):
+            raise ValueError(
+                "target_success_rate window must match the number of "
+                "rollouts per node"
+            )
         self.tree.add(root)
         self.external_policy.observe_node(root, self.tree.snapshot())
+        if self._target_reached(root.node):
+            return self._target_result()
         proposal_source_id = root.node.node_id
 
         while True:
@@ -706,8 +781,11 @@ class ExternalSearchCoordinator:
             command = self.external_policy.next_command(snapshot)
             if command.action == "stop":
                 self.tree.get(command.best_node_id or "")
+                best_node_id = (self.tree.best_validated_node_id()
+                                if self.objective is not None
+                                else command.best_node_id or "")
                 return SearchRunResult(
-                    best_node_id=command.best_node_id or "",
+                    best_node_id=best_node_id,
                     root_node_id=snapshot.root_node_id,
                     expansion_count=snapshot.expansion_count,
                     stop_rationale=command.rationale,
@@ -734,6 +812,8 @@ class ExternalSearchCoordinator:
                 raise ValueError("validated child does not reference selected proposal")
             self.tree.add(child)
             self.external_policy.observe_node(child, self.tree.snapshot())
+            if self._target_reached(child.node):
+                return self._target_result()
 
             # Next EnvRigger turn diagnoses the newly validated child. MCTS may
             # still select a pending proposal from any older environment.

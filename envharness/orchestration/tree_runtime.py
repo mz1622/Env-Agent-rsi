@@ -24,6 +24,7 @@ from envharness.orchestration.orchestrator import (
     Orchestrator,
     _checkpoint_from_candidate,
 )
+from envharness.orchestration.objectives import MutationObjective, TargetSuccessRate
 from envharness.orchestration.tree_search import (
     EnvironmentChangeProposal,
     EnvironmentNode,
@@ -109,6 +110,11 @@ class OrchestratorEvolutionRuntime:
             tool_schemas=self.orchestrator.tool_schemas,
             env_state_schema=self.orchestrator.env_state_schema,
             objective=self.orchestrator.objective,
+            objective_signal=(
+                environment.validation.objective_signal
+                if isinstance(self.orchestrator.objective, TargetSuccessRate)
+                else None
+            ),
             iteration_id=self.iteration_id,
             task_description=self.orchestrator.config.task_description,
             task_id=self.task_id,
@@ -193,7 +199,7 @@ class OrchestratorEvolutionRuntime:
         candidate: Candidate,
         traces: list[Trace],
     ) -> NodeSubmission:
-        summary = validation_summary(traces)
+        summary = validation_summary(traces, self.orchestrator.objective)
         checkpoint = _checkpoint_from_candidate(
             env_spec=self.orchestrator.env_spec,
             candidate=candidate,
@@ -245,7 +251,9 @@ class OrchestratorEvolutionRuntime:
         )
 
 
-def validation_summary(traces: list[Trace]) -> ValidationSummary:
+def validation_summary(
+    traces: list[Trace], objective: MutationObjective | None = None,
+) -> ValidationSummary:
     """Build the external MCTS value payload from K validation traces."""
     n = len(traces)
     n_success = sum(1 for trace in traces if trace.success)
@@ -253,6 +261,16 @@ def validation_summary(traces: list[Trace]) -> ValidationSummary:
     avg_reward = sum(trace.final_reward for trace in traces) / max(1, n)
     avg_steps = sum(trace.duration_steps for trace in traces) / max(1, n)
     n_errors = sum(1 for trace in traces if trace.error)
+    score = success_rate
+    suggestion_prompt = "External MCTS maximizes validation success rate."
+    if isinstance(objective, TargetSuccessRate):
+        # A partially validated or failing environment cannot be selected as
+        # the target-rate result, but its failed validation remains recorded.
+        score = (objective.score_for_rate(success_rate)
+                 if n == objective.window and not n_errors else -1.0)
+        suggestion_prompt = objective.guidance_for_counts(
+            n_success, n, n_errors,
+        )
     return ValidationSummary(
         n_rollouts=n,
         n_success=n_success,
@@ -261,12 +279,12 @@ def validation_summary(traces: list[Trace]) -> ValidationSummary:
         avg_steps=avg_steps,
         n_errors=n_errors,
         objective_signal=ObjectiveSignal(
-            score=success_rate,
+            score=score,
             diagnostic=(
                 f"Validated {n} rollouts: success_rate={success_rate:.3f}, "
-                f"errors={n_errors}."
+                f"score={score:.3f}, errors={n_errors}."
             ),
-            suggestion_prompt="External MCTS maximizes validation success rate.",
+            suggestion_prompt=suggestion_prompt,
         ),
         trace_ids=[trace.episode_id for trace in traces],
     )

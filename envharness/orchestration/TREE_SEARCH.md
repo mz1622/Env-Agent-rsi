@@ -217,6 +217,29 @@ from the root. This equals the sum of the direct parent/child success-rate
 deltas along its path, while still allowing deeper outcomes to update ancestor
 edges.
 
+### Optional target success rate
+
+The existing benchmark YAML files keep their current objectives. A run can opt
+in to a target-rate tree objective by setting:
+
+```yaml
+objective:
+  type: target_success_rate
+  target: 0.5
+  window: 8
+orchestrator:
+  k_per_candidate: 8
+```
+
+For this objective, each node's value is
+`1 - 2 * abs(successes / 8 - 0.5)`. PUCT backs up the child's value minus the
+root's value, and final selection uses that value. Equal values favor the
+shallower node, then the stable node ID. Nodes with execution errors are
+recorded but cannot be selected as the final result. EnvHarness's difficulty
+direction is computed from the current validated node, rather than other tree
+branches; it asks for a moderately easier or harder task. The
+coordinator stops immediately when a fully validated node reaches `4/8`.
+
 The policy emits only:
 
 ```json
@@ -232,9 +255,9 @@ The policy emits only:
 }
 ```
 
-`stop` remains part of the protocol but is not selected by this baseline. If
-no pending proposal is reachable, it raises `NoSelectableProposalError`; the
-coordinator still enforces `max_expansions` as a safety boundary.
+If no pending proposal is reachable, the policy returns `stop` with its best
+validated node. The coordinator also enforces `max_expansions` as a safety
+boundary.
 
 ## Components currently provided
 

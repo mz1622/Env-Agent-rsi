@@ -48,7 +48,7 @@ from envharness.infra.llm import LLMClient, Message
 from envharness.orchestration.objectives import MutationObjective
 from envharness.core.types import (
     Action, BaselineSnapshot, Candidate, Decision, DecideResult,
-    FailureAnalysis, TaskSummary, Trace,
+    FailureAnalysis, ObjectiveSignal, TaskSummary, Trace,
 )
 
 
@@ -58,6 +58,7 @@ class HarnessAgentContext:
     tool_schemas: list[dict] = field(default_factory=list)
     env_state_schema: str = ""
     objective: MutationObjective | None = None
+    objective_signal: ObjectiveSignal | None = None
     iteration_id: str = ""
     task_description: str = ""
     task_id: int = 0
@@ -789,7 +790,8 @@ class LLMHarnessAgent(HarnessAgent):
     def _base_messages(self, ctx: HarnessAgentContext, intro: str) -> list[Message]:
         sig_text = ""
         if ctx.objective is not None:
-            sig = ctx.objective.evaluate(ctx.history_traces)
+            sig = (ctx.objective_signal if ctx.objective_signal is not None
+                   else ctx.objective.evaluate(ctx.history_traces))
             sig_text = (
                 f"\nOBJECTIVE: {ctx.objective.name}\n"
                 f"  score: {sig.score:.3f}\n"

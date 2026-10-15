@@ -10,6 +10,7 @@ import json
 import pytest
 
 from envharness.core.types import Action, Candidate, Trace
+from envharness.orchestration.objectives import TargetSuccessRate
 from envharness.orchestration.tree_search import (
     EnvironmentChangeProposal,
     EnvironmentNode,
@@ -69,6 +70,25 @@ def _submission(
         ),
         validation_traces=[trace],
     )
+
+
+def _target_submission(node_id: str, parent_node_id: str | None, depth: int,
+                       successes: int, *, proposal_id: str | None = None,
+                       errors: int = 0, avg_reward: float = 0.0) -> NodeSubmission:
+    submission = _submission(
+        node_id, parent_node_id, depth,
+        incoming_proposal_id=proposal_id,
+        success_rate=successes / 8,
+    )
+    traces = [_trace(f"{node_id}-{index}", submission.node.candidate,
+                     success=index < successes) for index in range(8)]
+    submission.node.validation = ValidationSummary(
+        n_rollouts=8, n_success=successes, success_rate=successes / 8,
+        avg_reward=avg_reward, n_errors=errors,
+        trace_ids=[trace.episode_id for trace in traces],
+    )
+    submission.validation_traces = traces
+    return submission
 
 
 def _proposal(environment_id: str, proposal_id: str,
@@ -213,6 +233,50 @@ def test_uniform_puct_emits_stop_when_no_proposal_is_available():
     assert command.rationale == "no pending proposal is reachable"
 
 
+def test_target_puct_backpropagates_proximity_to_four_of_eight():
+    objective = TargetSuccessRate()
+    tree = EnvironmentTree(objective)
+    root = _target_submission("root", None, 0, 6)
+    tree.add(root)
+    policy = UniformPUCTPolicy(c_puct=0.0, objective=objective)
+    policy.observe_node(root, tree.snapshot())
+    batch = ProposalBatch(environment_id="root", proposals=[
+        _proposal("root", "root-stage", "stage"),
+        _proposal("root", "root-f_A", "f_A"),
+    ])
+    policy.observe_proposals(batch, tree.snapshot())
+
+    closer = _target_submission("closer", "root", 1, 5,
+                                proposal_id="root-stage")
+    tree.add(closer)
+    policy.observe_node(closer, tree.snapshot())
+    farther = _target_submission("farther", "root", 1, 7,
+                                 proposal_id="root-f_A")
+    tree.add(farther)
+    policy.observe_node(farther, tree.snapshot())
+
+    assert policy.puct_score_for("root-stage") == pytest.approx(0.25)
+    assert policy.puct_score_for("root-f_A") == pytest.approx(-0.25)
+
+
+def test_target_best_node_ties_by_depth_then_id_and_excludes_errors():
+    tree = EnvironmentTree(TargetSuccessRate())
+    tree.add(_target_submission("root", None, 0, 6))
+    tree.add(_target_submission("a", "root", 1, 3,
+                                proposal_id="root-stage", avg_reward=0.0))
+    tree.add(_target_submission("b", "root", 1, 5,
+                                proposal_id="root-f_A", avg_reward=1.0))
+    tree.add(_target_submission("error", "root", 1, 4,
+                                proposal_id="root-f_T", errors=1))
+    assert tree.best_validated_node_id() == "a"
+
+    shallow = EnvironmentTree(TargetSuccessRate())
+    shallow.add(_target_submission("root", None, 0, 3))
+    shallow.add(_target_submission("child", "root", 1, 5,
+                                   proposal_id="root-stage"))
+    assert shallow.best_validated_node_id() == "root"
+
+
 def test_external_protocol_payload_is_json_serializable():
     payload = _submission("root", None, 0)
     decoded = json.loads(payload.model_dump_json())
@@ -303,6 +367,101 @@ class _FakeExternalPolicy:
             best_node_id="node-2",
             rationale="external selector chose the second root branch",
         )
+
+
+class _TargetRuntime(_FakeRuntime):
+    def __init__(self, root_successes: int, child_successes: int):
+        super().__init__()
+        self.root_successes = root_successes
+        self.child_successes = child_successes
+
+    def create_root(self):
+        return _target_submission("root", None, 0, self.root_successes)
+
+    def apply_and_validate(self, environment, proposal,
+                           validation_traces, snapshot):
+        self.applied_to.append((environment.node_id, proposal.proposal_id))
+        return _target_submission(
+            "node-1", environment.node_id, environment.depth + 1,
+            self.child_successes, proposal_id=proposal.proposal_id,
+        )
+
+
+def test_target_coordinator_stops_at_four_of_eight_without_another_proposal():
+    objective = TargetSuccessRate()
+    root_target = _TargetRuntime(root_successes=4, child_successes=5)
+    root_result = ExternalSearchCoordinator(
+        root_target, objective=objective,
+    ).run(max_expansions=6)
+    assert root_result.best_node_id == "root"
+    assert root_result.expansion_count == 0
+    assert root_target.generated_for == []
+
+    child_target = _TargetRuntime(root_successes=6, child_successes=4)
+    child_result = ExternalSearchCoordinator(
+        child_target, objective=objective,
+    ).run(max_expansions=6)
+    assert child_result.best_node_id == "node-1"
+    assert child_result.expansion_count == 1
+    assert child_result.stop_rationale == "target success count reached"
+    assert child_target.generated_for == ["root"]
+
+
+def test_coordinator_reads_target_from_existing_runtime_config():
+    runtime = _TargetRuntime(root_successes=6, child_successes=4)
+    runtime.orchestrator = type("Orchestrator", (), {
+        "objective": TargetSuccessRate(),
+    })()
+    result = ExternalSearchCoordinator(runtime).run(max_expansions=6)
+    assert result.best_node_id == "node-1"
+    assert result.expansion_count == 1
+
+
+def test_target_coordinator_rejects_conflicting_runtime_objective():
+    runtime = _TargetRuntime(root_successes=6, child_successes=4)
+    runtime.orchestrator = type("Orchestrator", (), {
+        "objective": TargetSuccessRate(target=0.4),
+    })()
+    with pytest.raises(ValueError, match="must match the runtime objective"):
+        ExternalSearchCoordinator(runtime, objective=TargetSuccessRate())
+
+
+def test_target_coordinator_rejects_mismatched_rollout_count():
+    runtime = _FakeRuntime()  # Its root has one rollout, not the requested eight.
+    with pytest.raises(ValueError, match="window must match"):
+        ExternalSearchCoordinator(
+            runtime, objective=TargetSuccessRate(),
+        ).run(max_expansions=6)
+
+
+def test_target_coordinator_selects_verified_best_on_external_stop():
+    class _StopWithRoot:
+        def __init__(self):
+            self.proposal = None
+            self.calls = 0
+
+        def observe_node(self, submission, snapshot):
+            pass
+
+        def observe_proposals(self, batch, snapshot):
+            if batch.environment_id == "root":
+                self.proposal = batch.proposals[0]
+
+        def next_command(self, snapshot):
+            self.calls += 1
+            if self.calls == 1:
+                return SearchCommand(
+                    action="apply", environment_id="root",
+                    proposal=self.proposal,
+                )
+            return SearchCommand(action="stop", best_node_id="root")
+
+    runtime = _TargetRuntime(root_successes=6, child_successes=5)
+    result = ExternalSearchCoordinator(
+        runtime, external_policy=_StopWithRoot(),
+        objective=TargetSuccessRate(),
+    ).run(max_expansions=6)
+    assert result.best_node_id == "node-1"
 
 
 def test_coordinator_can_apply_historical_proposal_to_its_source_environment():

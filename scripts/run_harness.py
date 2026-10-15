@@ -87,7 +87,9 @@ from envharness.core.types import (
 from envharness.infra.llm import LiteLLMClient, LoggingLLMClient
 from envharness.infra.utils import import_symbol
 from envharness.orchestration.budget import CappedAdaptive, FixedBudget, ObjectiveDriven
-from envharness.orchestration.objectives import DifficultyZone, RedTeam
+from envharness.orchestration.objectives import (
+    DifficultyZone, RedTeam, TargetSuccessRate,
+)
 from envharness.orchestration.orchestrator import Orchestrator, OrchestratorConfig
 from envharness.orchestration.runner import (
     EnvSpec, EpisodeRunner, InProcessRunner, PolicySpec, SubprocessRunner,
@@ -309,6 +311,11 @@ def build_from_config(cfg_path: Path, run_name: str,
         )
     elif obj_cfg["type"] == "red_team":
         objective = RedTeam(window=obj_cfg.get("window", 10))
+    elif obj_cfg["type"] == "target_success_rate":
+        objective = TargetSuccessRate(
+            target=obj_cfg.get("target", 0.5),
+            window=obj_cfg.get("window", 8),
+        )
     else:
         raise ValueError(obj_cfg["type"])
 

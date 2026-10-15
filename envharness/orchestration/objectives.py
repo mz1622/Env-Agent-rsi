@@ -40,6 +40,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import Counter
+from math import isfinite
 
 from envharness.core.types import ObjectiveSignal, Trace
 
@@ -49,6 +50,60 @@ class MutationObjective(ABC):
 
     @abstractmethod
     def evaluate(self, recent_traces: list[Trace]) -> ObjectiveSignal: ...
+
+
+class TargetSuccessRate(MutationObjective):
+    """Prefer a validated success rate closest to a chosen target."""
+
+    name = "target_success_rate"
+
+    def __init__(self, target: float = 0.5, window: int = 8):
+        if not isfinite(target) or not 0.0 < target < 1.0:
+            raise ValueError("target_success_rate target must be between 0 and 1")
+        if window < 1:
+            raise ValueError("target_success_rate window must be positive")
+        self.target = float(target)
+        self.window = window
+
+    def score_for_rate(self, success_rate: float) -> float:
+        # For target=0.5: 1 - 2 * abs(success_rate - 0.5).
+        return 1.0 - abs(success_rate - self.target) / max(
+            self.target, 1.0 - self.target,
+        )
+
+    def guidance_for_counts(self, successes: int, rollouts: int,
+                            errors: int = 0) -> str:
+        if errors:
+            return "Repair environment execution errors before changing difficulty."
+        if not rollouts:
+            return "Collect validated rollouts before choosing a difficulty direction."
+        rate = successes / rollouts
+        if rate < self.target:
+            return "Make the task moderately easier for the Policy."
+        if rate > self.target:
+            return "Make the task moderately harder for the Policy."
+        return "Target success rate reached; stop without another change."
+
+    def evaluate(self, recent_traces: list[Trace]) -> ObjectiveSignal:
+        accepted = [trace for trace in recent_traces if trace.kind == "accepted"]
+        recent = accepted[-self.window:]
+        if not recent:
+            return ObjectiveSignal(
+                score=0.0,
+                diagnostic="No accepted validation trajectories yet.",
+                suggestion_prompt=self.guidance_for_counts(0, 0),
+            )
+        successes = sum(bool(trace.success) for trace in recent)
+        errors = sum(bool(trace.error) for trace in recent)
+        return ObjectiveSignal(
+            score=(self.score_for_rate(successes / len(recent))
+                   if not errors else -1.0),
+            diagnostic=(f"Validated {len(recent)} rollouts: "
+                        f"successes={successes}, execution_errors={errors}."),
+            suggestion_prompt=self.guidance_for_counts(
+                successes, len(recent), errors,
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------

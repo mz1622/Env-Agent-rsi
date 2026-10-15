@@ -1,7 +1,9 @@
 """Unit tests for applying selected MCTS proposals to complete Candidates."""
 from __future__ import annotations
 
+from envharness.agents.harness_agent import HarnessAgentContext, LLMHarnessAgent
 from envharness.core.types import Action, Candidate, Trace
+from envharness.orchestration.objectives import TargetSuccessRate
 from envharness.orchestration.tree_runtime import (
     OrchestratorEvolutionRuntime,
     merge_candidate_change,
@@ -54,6 +56,45 @@ def test_validation_summary_uses_fixed_rollout_group():
     assert summary.n_errors == 1
     assert summary.objective_signal is not None
     assert summary.objective_signal.score == 0.75
+
+
+def test_target_summary_uses_one_complete_group_and_rejects_execution_errors():
+    objective = TargetSuccessRate(target=0.5, window=8)
+    traces = [Trace(
+        episode_id=f"ep-{index}", iteration_id="it", task_id="task",
+        candidate=Candidate(), success=index < 5,
+    ) for index in range(8)]
+
+    summary = validation_summary(traces, objective)
+    assert summary.objective_signal.score == 0.75
+    assert "harder" in summary.objective_signal.suggestion_prompt
+    assert validation_summary(traces[:4], objective).objective_signal.score == -1.0
+    traces[7].error = "environment failed"
+    errored = validation_summary(traces, objective)
+    assert errored.n_errors == 1
+    assert errored.objective_signal.score == -1.0
+
+
+def test_target_prompt_uses_current_node_signal_not_other_history():
+    objective = TargetSuccessRate()
+    other_branch = [Trace(
+        episode_id=f"other-{index}", iteration_id="it", task_id="task",
+        candidate=Candidate(), success=False, kind="accepted",
+    ) for index in range(8)]
+    current = [Trace(
+        episode_id=f"current-{index}", iteration_id="it", task_id="task",
+        candidate=Candidate(), success=index < 6,
+    ) for index in range(8)]
+    signal = validation_summary(current, objective).objective_signal
+    ctx = HarnessAgentContext(
+        history_traces=other_branch, objective=objective,
+        objective_signal=signal,
+    )
+    prompt = LLMHarnessAgent(client=None)._base_messages(
+        ctx, intro="Propose a change.",
+    )[-1].content
+    assert "Make the task moderately harder" in prompt
+    assert "Make the task moderately easier" not in prompt
 
 
 def test_preloaded_root_requires_exact_rollout_group(tmp_path):

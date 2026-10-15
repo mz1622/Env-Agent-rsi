@@ -33,8 +33,10 @@ that's fed into the Rules's decide() prompt. When you add a new
 objective, model its tests on this file.
 """
 import pytest
+import yaml
+from pathlib import Path
 
-from envharness.orchestration.objectives import DifficultyZone
+from envharness.orchestration.objectives import DifficultyZone, TargetSuccessRate
 from envharness.core.types import (
     Candidate, ObjectiveSignal, Trace,
 )
@@ -45,6 +47,54 @@ def _trace(success: bool, kind: str = "accepted") -> Trace:
         episode_id="ep", iteration_id="it", task_id="t",
         candidate=Candidate(), success=success, kind=kind,
     )
+
+
+def test_target_success_rate_scores_all_eight_rollout_outcomes_symmetrically():
+    objective = TargetSuccessRate(target=0.5, window=8)
+    assert [objective.score_for_rate(count / 8) for count in range(9)] == [
+        0.0, 0.25, 0.5, 0.75, 1.0, 0.75, 0.5, 0.25, 0.0,
+    ]
+
+
+def test_target_success_rate_gives_only_a_difficulty_direction():
+    objective = TargetSuccessRate()
+    assert "easier" in objective.evaluate([_trace(False)] * 6 +
+                                           [_trace(True)] * 2).suggestion_prompt
+    assert "harder" in objective.evaluate([_trace(True)] * 6 +
+                                           [_trace(False)] * 2).suggestion_prompt
+    assert "4/8" not in objective.guidance_for_counts(2, 8)
+    assert "stop" in objective.guidance_for_counts(4, 8)
+
+
+def test_target_success_rate_rejects_invalid_target_and_window():
+    for target in (0.0, 1.0, float("nan"), float("inf")):
+        with pytest.raises(ValueError):
+            TargetSuccessRate(target=target)
+    with pytest.raises(ValueError):
+        TargetSuccessRate(window=0)
+
+
+def test_target_objective_can_be_selected_without_changing_corpus_yaml(tmp_path):
+    from scripts.run_harness import build_from_config
+
+    original = Path("experiments/toy24/original.yaml")
+    config = yaml.safe_load(original.read_text(encoding="utf-8"))
+    config["objective"] = {
+        "type": "target_success_rate", "target": 0.5, "window": 8,
+    }
+    config["orchestrator"]["k_per_candidate"] = 8
+    config["storage"]["trace_path"] = str(tmp_path / "traces.jsonl")
+    config.pop("logging", None)
+    configured = tmp_path / "target.yaml"
+    configured.write_text(yaml.safe_dump(config), encoding="utf-8")
+
+    orchestrator = build_from_config(configured, "target-test")
+    assert isinstance(orchestrator.objective, TargetSuccessRate)
+    assert orchestrator.objective.target == 0.5
+    assert orchestrator.config.k_per_candidate == 8
+    assert yaml.safe_load(original.read_text(encoding="utf-8"))[
+        "objective"
+    ]["type"] == "difficulty_zone"
 
 
 def test_difficulty_zone_rejects_bad_band():
