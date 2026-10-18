@@ -52,6 +52,73 @@ from envharness.core.types import (
 )
 
 
+# ALFWorld-specific two-phase f_T runtime contract.
+ALFWORLD_FT_RUNTIME_GUIDANCE = (
+    "Write exactly two top-level methods in the f_T code string, with no "
+    "module-level imports; import standard-library modules inside each method "
+    "that uses them. Action(name='do', kwargs={'text': command}) is the native "
+    "action shape. Parse full object and receptacle names, including spaces "
+    "and numeric suffixes. native_responses is a list of EnvResponse objects; "
+    "the native outcome text and effectiveness are in each response.info"
+    "['result']['text'] and ['effective']. Obtain a faithful response with "
+    "super().finalize_transition(...), then edit and return that EnvResponse; "
+    "EnvResponse has reward, terminated and truncated, not done or won fields. "
+    "A zero-native-action plan leaves the engine unchanged. Its default "
+    "response has no info['result'], so construct a truthful ALFWorld result "
+    "dict with text, effective=False, won, score and admissible_commands. "
+    "Put that same truthful no-op text in observation.text BEFORE the menu; "
+    "an info-only explanation is invisible to the Policy. "
+    "Keep the original 'Task: ...' header in observation.text and the "
+    "original observation.data['goal_text']; rewrite only the response body "
+    "and menu, never rebuild the whole observation from env_state.obs_text. "
+    "Whenever a virtual state changes availability, derive one menu and keep "
+    "observation.data['admissible_commands'], the final 'Admissible commands:' "
+    "line of observation.text, info['admissible_commands'] and "
+    "info['result']['admissible_commands'] identical. Do not append prose "
+    "after that line. A persistent-state safeguard may record an item only "
+    "after its native placement succeeds, then suppress a later action that "
+    "would undo that placement. Match the goal's object and destination "
+    "roles; do not freeze every moved object. Goals name an unnumbered item "
+    "and receptacle type, while commands name concrete numbered instances: "
+    "strip trailing numeric suffixes from concrete names and terminal "
+    "punctuation from parsed goal names before comparing them. Preserve "
+    "the FULL numbered instance names in env_state.extras and in exact "
+    "source/destination checks; several receptacles may share one type. "
+    "If a take "
+    "is suppressed, remove "
+    "that exact take command from the visible menu while the fixed state "
+    "holds, or the Policy may repeat an advertised but impossible action. "
+    "Choose ONE mechanism for this candidate; do not add an unrelated "
+    "safeguard to a macro or a macro to a persistent-state safeguard. "
+    "A conditional macro may expand one agent "
+    "action into a short native sequence, such as arrival followed by a "
+    "treatment of a held item at a verified open appliance. A later native "
+    "sub-action is often absent from the PRE-step admissible menu because it "
+    "becomes legal only after the first action. An appliance may have been "
+    "opened earlier and then left, so the pre-step obs_text at the item's "
+    "location cannot tell whether it remains open. Track successful open and "
+    "close actions in env_state.extras and use that verified state for the "
+    "guard; inspect every actual native result afterward, and never "
+    "claim a failed sub-action succeeded. If a later sub-action fails, keep "
+    "the last native failure visible; do not replace it with an earlier "
+    "arrival success. Check the actual native result text matches the "
+    "planned treatment of the held item before marking it complete. Match "
+    "the task's requested operation exactly. ALFWorld goals can express an "
+    "operation as a verb before the object or as an adjective on the object; "
+    "recognize both forms by role without hardcoding an item name. A cooling "
+    "macro must not fire "
+    "on a heat or cleaning goal. For a cooling goal, also recheck that the "
+    "CURRENT held object's type matches the goal object's type immediately "
+    "before planning cooling; a verified pickup of another item may replace "
+    "the previously held goal item. Never cool an unrelated held object. "
+    "Call super().finalize_transition with the "
+    "FULL native_responses list, because it sums native rewards; passing "
+    "only [last] silently drops earlier rewards. Clear tracked held-item "
+    "state after a verified successful move/put/drop. Ground the trigger in actions "
+    "actually present in this task's baseline trajectories."
+)
+
+
 @dataclass
 class HarnessAgentContext:
     history_traces: list[Trace] = field(default_factory=list)
@@ -193,8 +260,9 @@ PROPOSE_TOOL = {
                     "type": "object",
                     "description": (
                         "Three independent A/T/O changes. Each has its own "
-                        "code and rationale. A non-empty code must be one complete "
-                        "Python method definition without a class wrapper. Leave "
+                        "code and rationale. A non-empty A/O code is one complete "
+                        "Python method; T may contain the pre/post method pair. "
+                        "Omit the class wrapper. Leave "
                         "both fields empty for an unused change."
                     ),
                     "properties": {
@@ -218,8 +286,11 @@ PROPOSE_TOOL = {
                             "description": "Independent transition change.",
                             "properties": {
                                 "code": {"type": "string", "description": (
-                                    "Complete `def modify_transition(self, action, "
-                                    "raw_response, env_state): ...` method, or ''.")},
+                                    "Two complete methods, `def prepare_transition(self, "
+                                    "action, env_state): ...` and "
+                                    "`def finalize_transition(self, action, plan, "
+                                    "native_responses, env_state): ...`, or the "
+                                    "legacy post-only `modify_transition` method; or ''.")},
                                 "rationale": {"type": "string", "description": (
                                     "Why this f_T change is appropriate. Use '' "
                                     "when code is empty.")},
@@ -329,9 +400,11 @@ empty:
    `def filter_action(self, action, env_state): ...`, or `""`; explain it in
    `contract.f_A.rationale`.
 
-3. `contract.f_T.code` changes the transition response. Return one complete
-   method `def modify_transition(self, action, raw_response, env_state): ...`,
-   or `""`; explain it in `contract.f_T.rationale`.
+3. `contract.f_T.code` changes transitions. Return two complete methods,
+   `def prepare_transition(self, action, env_state): ...` and
+   `def finalize_transition(self, action, plan, native_responses, env_state): ...`,
+   or one legacy post-only `modify_transition` method, or `""`; explain it in
+   `contract.f_T.rationale`.
 
 4. `contract.f_O.code` changes the observation shown to the Policy. Return one
    complete method `def filter_observation(self, obs, env_state): ...`, or
@@ -395,7 +468,7 @@ manually escape for JSON. The wrapper handles JSON transport.
 TYPES IN SCOPE -- ALL Pydantic models. USE KEYWORD ARGS, NEVER POSITIONAL.
 ================================================================
 
-These five names are pre-bound in your code's namespace; you do NOT import
+These names are pre-bound in your code's namespace; you do NOT import
 them. Beyond them, import only from the Python standard library -- a
 third-party package is not guaranteed to be installed, and an import inside a
 hook body raises at the first step that reaches it, killing every rollout of
@@ -432,8 +505,15 @@ that candidate. Do not import a name you are not going to use.
                  return EnvResponse(observation=..., reward=...,
                                     terminated=..., truncated=..., info=...)
         Mutating raw_response.info in place is OK (it's a dict).
-        Do not mutate env_state directly; express changes through the
-        selected function's return value.
+
+    TransitionPlan
+        Fields: actions: list[Action], context: dict[str, Any]
+        Usage: return TransitionPlan(actions=[action]) in prepare_transition.
+        An empty actions list leaves the native environment unchanged.
+        The finalize hook receives actual native responses in execution order.
+
+Do not modify authoritative env_state fields directly. Bench-specific
+env_state.extras may hold verified virtual state across actions.
 
 ================================================================
 WORKED EXAMPLES (idiomatic patterns)
@@ -499,8 +579,8 @@ def filter_observation(self, obs, env_state):
 `env_state` is the bench-exposed data view your hooks receive. It
 contains NO runtime handles -- only data. Use the env_state schema in
 the user prompt to know its fields. Hooks may READ all env_state fields;
-treat them as effectively read-only (mutations have no path back into
-the bench's authoritative state).
+do not mutate authoritative fields. Bench-specific `extras` may store
+verified virtual state for later transition hooks.
 
 ================================================================
 PITFALL -- DO NOT MAKE THE TASK MATHEMATICALLY UNSOLVABLE
@@ -809,8 +889,17 @@ class LLMHarnessAgent(HarnessAgent):
             for t in recent
         ) or "  (none)"
         tools_text = json.dumps(ctx.tool_schemas, indent=2)[:3000]
+        system_prompt = self.system_prompt
+        if "AlfworldEnvState" in ctx.env_state_schema:
+            system_prompt += (
+                "\n\nFor ALFWorld f_T, implement a genuine state-dependent "
+                "transition with both prepare_transition and "
+                "finalize_transition. Keep the task goal and native command "
+                "vocabulary unchanged; the task must remain solvable. "
+                "\n" + ALFWORLD_FT_RUNTIME_GUIDANCE
+            )
         return [
-            Message(role="system", content=self.system_prompt),
+            Message(role="system", content=system_prompt),
             Message(role="user", content=(
                 f"Task: {ctx.task_description}\n"
                 f"Iteration: {ctx.iteration_id}\n\n"
@@ -1061,6 +1150,35 @@ def _clean_method_source(value: Any) -> str:
     return textwrap.dedent(source).strip()
 
 
+def _is_transition_code(source: str) -> bool:
+    """Accept exactly a pre/post f_T pair or one legacy post-only method."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return False
+    if not tree.body or not all(isinstance(node, ast.FunctionDef)
+                                for node in tree.body):
+        return False
+    signatures = {
+        "prepare_transition": ["self", "action", "env_state"],
+        "finalize_transition": ["self", "action", "plan", "native_responses",
+                                "env_state"],
+        "modify_transition": ["self", "action", "raw_response", "env_state"],
+    }
+    names = [node.name for node in tree.body]
+    if names != ["modify_transition"] and not (
+        len(names) == 2
+        and set(names) == {"prepare_transition", "finalize_transition"}
+    ):
+        return False
+    return all(
+        [arg.arg for arg in node.args.args] == signatures[node.name]
+        and not node.args.vararg and not node.args.kwarg
+        and not node.args.kwonlyargs
+        for node in tree.body
+    )
+
+
 def _contract_change_from_value(value: Any) -> tuple[str, str]:
     """Parse one Contract slot, accepting the new object and legacy string."""
     if isinstance(value, dict):
@@ -1104,14 +1222,20 @@ def _contract_slots_from_rules_code(code: str) -> dict[str, str]:
     if rules_class is None:
         return slots
     by_method = {name: slot for slot, name in _CONTRACT_SLOT_METHODS.items()}
+    by_method.update({"prepare_transition": "f_T",
+                      "finalize_transition": "f_T"})
+    sources: dict[str, list[str]] = {slot: [] for slot in slots}
     for node in rules_class.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
         slot = by_method.get(node.name)
         if slot:
-            slots[slot] = textwrap.dedent(
-                ast.get_source_segment(code, node) or ""
-            ).strip()
+            source_lines = code.splitlines()[node.lineno - 1:node.end_lineno]
+            sources[slot].append(textwrap.dedent(
+                "\n".join(source_lines)
+            ).strip())
+    for slot, methods in sources.items():
+        slots[slot] = "\n\n".join(methods)
     return slots
 
 

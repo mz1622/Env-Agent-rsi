@@ -120,6 +120,7 @@ class EpisodeSpec:
     iteration_id: str
     task_id: str = ""
     max_steps: int = 50
+    policy_seed: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -144,9 +145,12 @@ def build_env_stack(spec: EpisodeSpec) -> ActionableEnv:
     return env
 
 
-def _build_policy(spec: PolicySpec, tools: list[dict]) -> PolicyAgent:
+def _build_policy(spec: PolicySpec, tools: list[dict],
+                  policy_seed: int | None = None) -> PolicyAgent:
     client_cls = _import_symbol(spec.client_factory)
     client = client_cls(**spec.client_kwargs)
+    if policy_seed is not None and hasattr(client, "set_sampling_seed"):
+        client.set_sampling_seed(policy_seed)
     return PolicyAgent(
         client=client, tools=tools,
         task_prompt=spec.task_prompt,
@@ -203,6 +207,7 @@ def run_episode(spec: EpisodeSpec) -> Trace:
             episode_id=episode_id, iteration_id=spec.iteration_id,
             task_id=spec.task_id, candidate=spec.candidate,
             rollout_seed=spec.env.reset_seed,
+            policy_seed=spec.policy_seed,
             error=f"RulesCodeError: {e}",
         )
 
@@ -218,12 +223,15 @@ def run_episode(spec: EpisodeSpec) -> Trace:
                 episode_id=episode_id, iteration_id=spec.iteration_id,
                 task_id=spec.task_id, candidate=spec.candidate,
                 rollout_seed=spec.env.reset_seed,
+                policy_seed=spec.policy_seed,
                 error=f"env.reset raised: {type(e).__name__}: {e}",
             )
 
         # Tool schemas live on the base env class (EnvHarness inherits empty).
         base = _base_env(env)
-        policy = _build_policy(spec.policy, type(base).tool_schemas())
+        policy = _build_policy(
+            spec.policy, type(base).tool_schemas(), spec.policy_seed,
+        )
         policy.reset()
 
         obs = reset.observation
@@ -255,16 +263,21 @@ def run_episode(spec: EpisodeSpec) -> Trace:
                     episode_id=episode_id, iteration_id=spec.iteration_id,
                     task_id=spec.task_id, candidate=spec.candidate, steps=steps,
                     rollout_seed=spec.env.reset_seed,
+                    policy_seed=spec.policy_seed,
+                    initial_observation=reset.observation,
                     duration_steps=len(steps),
                     error=f"policy.act raised: {type(e).__name__}: {e}",
                 )
             try:
+                issued_action = raw_action.model_copy(deep=True)
                 env_resp = env.step(raw_action)
             except Exception as e:
                 return Trace(
                     episode_id=episode_id, iteration_id=spec.iteration_id,
                     task_id=spec.task_id, candidate=spec.candidate, steps=steps,
                     rollout_seed=spec.env.reset_seed,
+                    policy_seed=spec.policy_seed,
+                    initial_observation=reset.observation,
                     duration_steps=len(steps),
                     error=f"env.step raised: {type(e).__name__}: {e}",
                 )
@@ -273,18 +286,34 @@ def run_episode(spec: EpisodeSpec) -> Trace:
             # and info["blocked_reason"]; capture these on the Step record.
             blocked = bool((env_resp.observation.data or {}).get("blocked"))
             blocked_reason = (env_resp.info or {}).get("blocked_reason")
+            hook_step = getattr(env, "_last_step_hooks", None) or {}
 
             step_record = Step(
-                raw_action=raw_action,
-                filtered_action=None if blocked else raw_action,
+                raw_action=issued_action,
+                filtered_action=(
+                    hook_step.get("filtered_action")
+                    if hook_step else (None if blocked else raw_action)
+                ),
                 blocked_reason=blocked_reason,
-                raw_observation=env_resp.observation,
-                filtered_observation=env_resp.observation,
-                raw_reward=env_resp.reward,
+                raw_observation=hook_step.get(
+                    "raw_observation", env_resp.observation,
+                ),
+                transition_observation=hook_step.get(
+                    "transition_observation", env_resp.observation,
+                ),
+                filtered_observation=hook_step.get(
+                    "filtered_observation", env_resp.observation,
+                ),
+                raw_reward=hook_step.get("raw_reward", env_resp.reward),
                 filtered_reward=env_resp.reward,
                 terminated=env_resp.terminated,
                 truncated=env_resp.truncated,
+                raw_info=hook_step.get("raw_info", dict(env_resp.info or {})),
                 info=dict(env_resp.info or {}),
+                transition_plan_actions=hook_step.get(
+                    "transition_plan_actions"),
+                transition_native_responses=hook_step.get(
+                    "transition_native_responses", []),
                 policy_raw_response=getattr(policy, "last_raw_response", None) or None,
             )
             _stamp_process_reward(step_record)
@@ -299,8 +328,11 @@ def run_episode(spec: EpisodeSpec) -> Trace:
             episode_id=episode_id, iteration_id=spec.iteration_id,
             task_id=spec.task_id, candidate=spec.candidate, steps=steps,
             rollout_seed=spec.env.reset_seed,
+            policy_seed=spec.policy_seed,
+            initial_observation=reset.observation,
             final_reward=cumulative_reward,
             success=eval_result.success,
+            evaluation_feedback=str(eval_result.metrics.get("feedback") or ""),
             duration_steps=len(steps),
             policy_model_id=getattr(policy.client, "model_id", "unknown") if policy else "unknown",
         )
@@ -359,6 +391,7 @@ class SubprocessRunner(EpisodeRunner):
             "iteration_id": spec.iteration_id,
             "task_id": spec.task_id,
             "max_steps": spec.max_steps,
+            "policy_seed": spec.policy_seed,
         })
         attempt_id = uuid.uuid4().hex[:10]
         # Launch the worker by ABSOLUTE FILE PATH (not `-m envharness...`):
@@ -383,6 +416,7 @@ class SubprocessRunner(EpisodeRunner):
                 iteration_id=spec.iteration_id, task_id=spec.task_id,
                 candidate=spec.candidate, error="subprocess timeout",
                 rollout_seed=spec.env.reset_seed,
+                policy_seed=spec.policy_seed,
             )
         self._maybe_save_stderr(attempt_id, proc.stderr or "")
         if proc.returncode != 0:
@@ -392,6 +426,7 @@ class SubprocessRunner(EpisodeRunner):
                 error=f"subprocess exit {proc.returncode}",
                 subprocess_stderr=proc.stderr[-2000:],
                 rollout_seed=spec.env.reset_seed,
+                policy_seed=spec.policy_seed,
             )
         last_line = proc.stdout.strip().split("\n")[-1] if proc.stdout.strip() else ""
         if not last_line:
@@ -401,6 +436,7 @@ class SubprocessRunner(EpisodeRunner):
                 error="subprocess produced no Trace JSON",
                 subprocess_stderr=proc.stderr[-2000:],
                 rollout_seed=spec.env.reset_seed,
+                policy_seed=spec.policy_seed,
             )
         trace = Trace.model_validate_json(last_line)
         if proc.stderr:

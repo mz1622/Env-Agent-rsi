@@ -75,12 +75,18 @@ class Step(BaseModel):
     filtered_action: Action | None = None      # None if Blocked
     blocked_reason: str | None = None
     raw_observation: Observation | None = None
+    transition_observation: Observation | None = None
     filtered_observation: Observation | None = None
     raw_reward: float = 0.0
     filtered_reward: float = 0.0
     terminated: bool = False
     truncated: bool = False
+    raw_info: dict[str, Any] = Field(default_factory=dict)
     info: dict[str, Any] = Field(default_factory=dict)
+    # Populated only for a two-phase f_T implementation. None means the
+    # legacy one-native-action path; [] means a deliberate virtual-only step.
+    transition_plan_actions: list[Action] | None = None
+    transition_native_responses: list[EnvResponse] = Field(default_factory=list)
     # Full LLM response that produced this step's action -- captures any
     # <think>...</think> reasoning the policy emitted. Optional; only filled
     # by action_format=think_action / text_complete / react paths where the
@@ -108,6 +114,22 @@ class EnvResponse(BaseModel):
     info: dict[str, Any] = Field(default_factory=dict)
 
 
+class TransitionPlan(BaseModel):
+    """Native actions to execute for one agent-visible transition.
+
+    An empty plan is a virtual-state step: the post-transition hook must
+    produce a truthful observation without advancing the native environment.
+    ``context`` carries pre-step facts to the post-transition hook; it is not
+    shown to the Policy.
+    """
+    model_config = ConfigDict(extra="forbid")
+    actions: list[Action] = Field(default_factory=list)
+    context: dict[str, Any] = Field(default_factory=dict)
+
+
+Step.model_rebuild()
+
+
 class EnvResetResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
     observation: Observation
@@ -128,13 +150,13 @@ class EvaluationResult(BaseModel):
 # A Candidate may carry up to four independent changes:
 #   - Stage: in_env_actions changes the initial state.
 #   - Contract f_A: filter_action.
-#   - Contract f_T: modify_transition.
+#   - Contract f_T: prepare/finalize_transition, or legacy modify_transition.
 #   - Contract f_O: filter_observation.
 # Each change has its own rationale field; unused slots leave both the payload
 # and that rationale empty. ``rationale`` remains only for compatibility with
 # native/scripted agents that predate the four-slot proposal protocol.
 #
-# The three Contract functions are compiled into one `_Rules(Rules)` class for
+# The Contract methods are compiled into one `_Rules(Rules)` class for
 # native EnvHarness execution. Empty Stage/actions and empty Contract code form
 # a pass-through Candidate.
 
@@ -205,11 +227,13 @@ class Trace(BaseModel):
     candidate_id: str = ""                     # links K rollouts of one candidate
     rollout_idx: int = 0                       # 0..K-1 within a candidate
     rollout_seed: int | None = None            # seed used by Bridge.reset
+    initial_observation: Observation | None = None
 
     steps: list[Step] = Field(default_factory=list)
 
     final_reward: float = 0.0
     success: bool = False
+    evaluation_feedback: str = ""             # grader summary safe for mutator context
     failure_analysis: FailureAnalysis | None = None
     duration_steps: int = 0
 

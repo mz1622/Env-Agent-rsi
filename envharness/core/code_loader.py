@@ -44,11 +44,15 @@ from __future__ import annotations
 
 import ast
 
-from envharness.core.types import Action, Blocked, EnvResponse, Observation
+from envharness.core.types import (
+    Action, Blocked, EnvResponse, Observation, TransitionPlan,
+)
 
 
 _CONTRACT_HOOKS = {
     "filter_action",
+    "prepare_transition",
+    "finalize_transition",
     "modify_transition",
     "filter_observation",
 }
@@ -71,6 +75,7 @@ def _default_namespace() -> dict:
         "Blocked":     Blocked,
         "Observation": Observation,
         "EnvResponse": EnvResponse,
+        "TransitionPlan": TransitionPlan,
     }
 
 
@@ -110,6 +115,7 @@ def load_rules_subclass(code: str) -> type:
         if unsupported:
             raise RulesCodeError(
                 "Contract code may override only filter_action, "
+                "prepare_transition, finalize_transition, "
                 "modify_transition, and filter_observation; unsupported "
                 f"method(s): {', '.join(unsupported)}"
             )
