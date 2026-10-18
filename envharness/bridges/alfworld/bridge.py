@@ -48,6 +48,10 @@ Reset options (passed through `options` dict in reset()):
                           (default: "train").  Matches alfworld's `train_eval` arg.
     config_path: str   -- path to alfworld's base_config.yaml. If omitted, uses
                           $ALFWORLD_CONFIG, then alfworld's bundled config.
+    visibility_state: bool -- enable a conservative, read-only summary of
+                          current objects on non-openable receptacles for f_T
+                          (default True). The ordinary Policy observation
+                          stays unchanged; pass False to disable the summary.
 
 Design notes (derived from surveying RAGEN / AgentGym / AgentBench wrappers):
   - Single `do(text)` tool. Per-verb tools and tool-call JSON wrappers cause
@@ -106,6 +110,13 @@ class AlfworldEnvState:
     last_action_was_effective: bool = True
     repetition_count: int = 1                      # 1 = no repetition yet
     last_obs_for_repeat: str = ""
+    visible_surface_contents: dict[str, list[str]] = field(default_factory=dict)
+    """Current objects on visible receptacles, when visibility_state is enabled.
+
+    This is a read-only, task-independent view derived from current TextWorld
+    facts. Closed/openable receptacles are excluded, as are objects whose
+    location fact does not match the receptacle's location fact.
+    """
     extras: dict[str, Any] = field(default_factory=dict)
     """Free-form bag for Rules per-episode state (counters, RNG state,
     accumulators). Bridge never reads this."""
@@ -136,6 +147,7 @@ class AlfworldEnv(ActionableEnv):
         # already structures the prompt itself -- avoids duplicate context that
         # measurably hurts non-thinking-mode models.
         self._obs_style: str = "wrapped"
+        self._visibility_state: bool = True
         self.state: AlfworldEnvState = AlfworldEnvState()
 
     # -- core env interface -------------------------------------------------
@@ -143,6 +155,7 @@ class AlfworldEnv(ActionableEnv):
     def reset(self, seed: int | None = None,
               options: dict[str, Any] | None = None) -> EnvResetResponse:
         opts = options or {}
+        self._visibility_state = bool(opts.get("visibility_state", True))
         self._last_reset_seed = seed
         self._last_reset_options = dict(opts)
         split = opts.get("split", "train")
@@ -179,6 +192,10 @@ class AlfworldEnv(ActionableEnv):
             if train_subset_path:
                 self._apply_train_subset(
                     train_subset_path, authoritative=subset_authoritative)
+        if self._visibility_state:
+            # TextWorld supplies current facts through the ordinary reset/step
+            # info channel. Keep engine handles out of Rules and Policy.
+            self._env.request_infos.facts = True
 
         # Task selection: explicit task_id beats seed-based selection.
         task_id = opts.get("task_id") or ""
@@ -217,6 +234,8 @@ class AlfworldEnv(ActionableEnv):
         obs_text = ob[0] if isinstance(ob, (list, tuple)) else ob
         info = self._unwrap_info(info)
         admissible = self._extract_admissible(info)
+        visible_contents = (self._surface_contents_from_facts(info.get("facts"))
+                            if self._visibility_state else {})
         goal_text = self._extract_goal(obs_text)
         max_score = float(info.get("max_score", 1.0) or 1.0)
 
@@ -232,6 +251,7 @@ class AlfworldEnv(ActionableEnv):
             last_action_was_effective=True,
             repetition_count=1,
             last_obs_for_repeat=obs_text,
+            visible_surface_contents=visible_contents,
         )
         return EnvResetResponse(
             observation=self._observe(),
@@ -279,6 +299,8 @@ class AlfworldEnv(ActionableEnv):
         engine_done = bool(dones[0] if isinstance(dones, (list, tuple)) else dones)
         info = self._unwrap_info(infos)
         admissible = self._extract_admissible(info)
+        visible_contents = (self._surface_contents_from_facts(info.get("facts"))
+                            if self._visibility_state else {})
 
         # "Nothing happens" -> action was a no-op (AgentBench heuristic)
         effective = "nothing happens" not in obs_text.lower()
@@ -298,6 +320,7 @@ class AlfworldEnv(ActionableEnv):
         # Update state BEFORE building the obs so _observe sees the new values.
         self.state.obs_text = obs_text
         self.state.admissible_commands = admissible
+        self.state.visible_surface_contents = visible_contents
         self.state.score = score
         self.state.max_score = max_score
         self.state.won = won
@@ -380,6 +403,9 @@ class AlfworldEnv(ActionableEnv):
             "  repetition_count: int          -- consecutive identical observations;\n"
             "                                    Bridge truncates at 3 to prevent loops\n"
             "  last_obs_for_repeat: str       -- internal: previous obs for repeat check\n"
+            "  visible_surface_contents: dict[str, list[str]] -- current objects on open\n"
+            "                                    surfaces when reset option visibility_state\n"
+            "                                    is enabled; excludes closed containers\n"
             "  extras: dict                   -- free dict for Rules per-episode state\n"
             "S0 changes go through in_env_actions (Setup layer), not Rules. Rules hooks may read all\n"
             "fields and write to `extras`. Modifying obs_text in filter_observation is\n"
@@ -746,6 +772,41 @@ class AlfworldEnv(ActionableEnv):
                 "last_action_was_effective": self.state.last_action_was_effective,
             },
         )
+
+    @staticmethod
+    def _surface_contents_from_facts(facts: Any) -> dict[str, list[str]]:
+        """Expose a conservative panoramic view without hidden containers.
+
+        ALFWorld can list one object under multiple receptacles. Require the
+        object's own location to match the receptacle's location before showing
+        it, so stale or overlapping inreceptacle facts do not invent visibility.
+        """
+        if facts is None:
+            raise RuntimeError("ALFWorld visibility_state requires TextWorld facts")
+        relations: dict[str, list[tuple[str, ...]]] = {}
+        for fact in facts:
+            name = getattr(fact, "name", None)
+            arguments = getattr(fact, "arguments", None)
+            if name and arguments is not None:
+                relations.setdefault(name, []).append(
+                    tuple(str(arg.name) for arg in arguments))
+        openable = {args[0] for args in relations.get("openable", [])
+                    if len(args) == 1}
+        locations = {args[0]: args[1]
+                     for args in relations.get("receptacleatlocation", [])
+                     if len(args) == 2 and args[0] not in openable}
+        object_locations = {args[0]: args[1]
+                            for args in relations.get("objectatlocation", [])
+                            if len(args) == 2}
+        contents: dict[str, set[str]] = {}
+        for args in relations.get("inreceptacle", []):
+            if len(args) != 2:
+                continue
+            item, receptacle = args
+            if (receptacle in locations
+                    and object_locations.get(item) == locations[receptacle]):
+                contents.setdefault(receptacle, set()).add(item)
+        return {place: sorted(items) for place, items in sorted(contents.items())}
 
     @staticmethod
     def _extract_admissible(info: dict) -> list[str]:
