@@ -236,6 +236,23 @@ class Checkpoints(unittest.TestCase):
             self.assertEqual(os.environ["GEMINI_API_KEY"], "offline-dummy")
         self.assertEqual(seen, [(PROFILE["base"] + "/embeddings", "Bearer local")])
 
+    def test_default_qwen_model_and_revision(self):
+        digest = "a" * 64
+        tag = {"name": "qwen3-embedding:0.6b-fp16", "digest": digest}
+        def tags():
+            return io.BytesIO(json.dumps({"models": [tag]}).encode())
+
+        with patch.dict(os.environ, {"EH_EMBED_MODEL": "", "EH_LOCAL_EMBED_API_BASE": "",
+                                     "EH_EMBED_REVISION": ""}), patch.object(
+                proxy, "urlopen", side_effect=[tags(), tags()]) as lookup:
+            self.assertEqual(proxy.embedding_profile(), {
+                "model": "openai/qwen3-embedding:0.6b-fp16",
+                "base": "http://127.0.0.1:11434/v1", "revision": "sha256:" + digest})
+            lookup.assert_called_once_with("http://127.0.0.1:11434/api/tags", timeout=5)
+            os.environ["EH_EMBED_REVISION"] = "b" * 64
+            with self.assertRaisesRegex(ValueError, "digest differs"):
+                proxy.embedding_profile()
+
     def test_resume_matches_upstream_and_uninterrupted(self):
         from envharness.core.types import Action, Candidate, DecideResult, Decision, Observation, Step, Trace
         from scripts import run_harness

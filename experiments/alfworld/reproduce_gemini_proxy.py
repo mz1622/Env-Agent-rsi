@@ -5,20 +5,25 @@
     python3 experiments/alfworld/reproduce_gemini_proxy.py status
 
 Repeat run with the same ROOT_RUN to resume. --through corpus|skills|bank
-stops after that stage. A separate native Gemini embedding service takes
+stops after that stage. Embeddings default to Qwen3-Embedding-0.6B (FP16)
+served by local Ollama. A separate native Gemini embedding service takes
 EH_GEMINI_EMBED_API_BASE (including the version) and EH_GEMINI_EMBED_API_KEY.
 For a locally served OpenAI-compatible embedding model, set EH_EMBED_MODEL
 to openai/<served-name> and EH_LOCAL_EMBED_API_BASE to its /v1 URL.
 """
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 REPO = Path(__file__).resolve().parents[2]
 CHAT = "gemini/gemini-3.1-flash-lite"
-EMBED = "gemini/gemini-embedding-001"
+EMBED = "openai/qwen3-embedding:0.6b-fp16"
+OLLAMA_BASE = "http://127.0.0.1:11434"
+NATIVE_WIDTH = {EMBED: 1024, "gemini/gemini-embedding-001": 3072}
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
 
 
@@ -45,8 +50,20 @@ def check_tool():
 
 def embedding_profile():
     model = os.getenv("EH_EMBED_MODEL") or EMBED
+    revision = os.getenv("EH_EMBED_REVISION") or ""
     if model.startswith("openai/"):
         base = os.getenv("EH_LOCAL_EMBED_API_BASE", "").rstrip("/")
+        if model == EMBED and (not base or base == OLLAMA_BASE + "/v1"):
+            base = OLLAMA_BASE + "/v1"
+            with urlopen(OLLAMA_BASE + "/api/tags", timeout=5) as response:
+                tags = json.load(response)["models"]
+            name = model.removeprefix("openai/")
+            fingerprint = next((tag["digest"] for tag in tags if tag["name"] == name), None)
+            if not fingerprint:
+                raise ValueError(f"Install the embedding model with: ollama pull {name}")
+            if revision and revision.removeprefix("sha256:") != fingerprint:
+                raise ValueError(f"Installed {name} digest differs from EH_EMBED_REVISION")
+            revision = "sha256:" + fingerprint
         if not base:
             raise ValueError("Set EH_LOCAL_EMBED_API_BASE to the local embedding server's /v1 URL.")
         # Never inherit a cloud credential when selecting a local service.
@@ -59,7 +76,7 @@ def embedding_profile():
     url = urlsplit(base)
     if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password or url.query or url.fragment:
         raise ValueError("Use an API base URL without embedded credentials or query parameters.")
-    return dict(model=model, base=base, revision=os.getenv("EH_EMBED_REVISION") or "")
+    return dict(model=model, base=base, revision=revision)
 
 
 def check_embedding(profile):
@@ -73,8 +90,9 @@ def check_embedding(profile):
     dimensions = [len(item["embedding"]) for item in response.data]
     if len(dimensions) != 2 or dimensions[0] <= 0 or dimensions[0] != dimensions[1]:
         raise ValueError(f"Unexpected embedding dimensions {dimensions}")
-    if profile["model"] == EMBED and dimensions[0] != 3072:
-        raise ValueError(f"Expected gemini-embedding-001 at native width, got {dimensions}")
+    expected = NATIVE_WIDTH.get(profile["model"])
+    if expected and dimensions[0] != expected:
+        raise ValueError(f"Expected {profile['model']} at width {expected}, got {dimensions}")
     print(f"Batch embedding OK ({profile['model']}, 2 x {dimensions[0]}).")
     return dimensions[0]
 

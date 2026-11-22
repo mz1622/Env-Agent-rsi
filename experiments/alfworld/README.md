@@ -20,18 +20,28 @@ Set `ALFWORLD_DATA` to an existing ALFWorld data directory or use
 `.venv/bin/alfworld-download` to populate the default `~/.cache/alfworld`.
 Supply `GEMINI_API_KEY` in the process environment. Set `GEMINI_API_BASE` to
 the Gemini-compatible base URL for a proxy-issued key. The default is Google's
-Gemini API. Chat and embedding default to `gemini-3.1-flash-lite` and
-`gemini-embedding-001`, respectively.
+Gemini API. The policy and skill induction use `gemini-3.1-flash-lite`.
+Both skill indexing and task retrieval use local Qwen3-Embedding-0.6B
+(FP16, 1024 dimensions). The policy receives the retrieved skill text.
+
+Start Ollama on this machine (`ollama serve` if it is not already running),
+then pull the model and start the experiment in another shell.
 
 ```bash
+ollama pull qwen3-embedding:0.6b-fp16
 .venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py check
 .venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py run
 .venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py status
 ```
 
 The default output is `runs/alfworld_gemini_ours/`. Repeat the same run command
-to resume. For a separate Gemini embedding service set
-`EH_GEMINI_EMBED_API_BASE` and `EH_GEMINI_EMBED_API_KEY` together. A local
+to resume. The default Ollama endpoint is `http://127.0.0.1:11434/v1`.
+The index records the installed model digest. Set `EH_EMBED_REVISION` to an
+expected digest to verify it before resuming. The FP16 manifest used for this
+run was `sha256:67a7592a8852b7b36f6328cdec193cfb7639769f5edf344ba709b088b2a51042`.
+For Gemini embeddings set
+`EH_EMBED_MODEL=gemini/gemini-embedding-001`. For a separate Gemini embedding
+service also set `EH_GEMINI_EMBED_API_BASE` and `EH_GEMINI_EMBED_API_KEY`. A local
 OpenAI-compatible embedding service uses `EH_EMBED_MODEL=openai/<served-name>`
 and `EH_LOCAL_EMBED_API_BASE=http://127.0.0.1:<port>/v1`. To collect trajectories
 and induce skills before an embedding service is available, use
