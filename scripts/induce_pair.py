@@ -89,7 +89,8 @@ def _pick_pair(rollouts: list[dict]) -> tuple[dict | None, dict | None]:
 
 
 def _items_for_task(task_id: str, condition: str, succ: dict | None,
-                     fail: dict | None, llm_model: str) -> list[dict]:
+                     fail: dict | None, llm_model: str, *,
+                     raise_on_exhaustion: bool = False) -> list[dict]:
     """Per task: if both succ and fail exist, use paired-diff (compare the
     two trajectories and extract what the success did differently). If only
     one exists, fall back to single-trajectory induction."""
@@ -103,6 +104,7 @@ def _items_for_task(task_id: str, condition: str, succ: dict | None,
             fail_trajectory_text=format_trajectory(fail["steps"]),
             succ_trajectory_text=format_trajectory(succ["steps"]),
             llm_model=llm_model,
+            raise_on_exhaustion=raise_on_exhaustion,
         ):
             it["source"] = {"task_id": task_id, "condition": condition,
                               "induction": "paired_diff",
@@ -115,6 +117,7 @@ def _items_for_task(task_id: str, condition: str, succ: dict | None,
             task_query=query,
             trajectory_text=format_trajectory(succ["steps"]),
             success=True, llm_model=llm_model,
+            raise_on_exhaustion=raise_on_exhaustion,
         ):
             it["source"] = {"task_id": task_id, "condition": condition,
                               "induction": "single_succ",
@@ -125,6 +128,7 @@ def _items_for_task(task_id: str, condition: str, succ: dict | None,
             task_query=query,
             trajectory_text=format_trajectory(fail["steps"]),
             success=False, llm_model=llm_model,
+            raise_on_exhaustion=raise_on_exhaustion,
         ):
             it["source"] = {"task_id": task_id, "condition": condition,
                               "induction": "single_fail",

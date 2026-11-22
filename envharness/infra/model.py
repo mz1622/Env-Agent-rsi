@@ -463,6 +463,14 @@ def embedding_kwargs(model: str | None = None, **overrides) -> dict:
     """
     embed = overrides.pop("model", None) or embedding_model(model)
     kwargs = auth_kwargs(embed)
+    if split_model(embed)[0] == "gemini":
+        base = os.environ.get("EH_GEMINI_EMBED_API_BASE")
+        key = os.environ.get("EH_GEMINI_EMBED_API_KEY")
+        if bool(base) != bool(key):
+            raise ValueError("Set EH_GEMINI_EMBED_API_BASE and EH_GEMINI_EMBED_API_KEY together")
+        if base:
+            # A separate embedding endpoint must use its own credential.
+            kwargs.update(api_base=base.rstrip("/"), api_key=key)
     kwargs.update({k: v for k, v in overrides.items() if v is not None})
     return kwargs
 

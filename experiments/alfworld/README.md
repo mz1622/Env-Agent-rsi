@@ -1,5 +1,42 @@
 # EnvHarness on ALFWorld
 
+## Resumable Gemini skills experiment
+
+This branch packages the EnvHarness `ours` condition used on Qiyuan. It collects
+100 training tasks over four shards, induces skills from the resulting trajectories
+and builds an embedding index. Each validation episode retrieves five skills by
+MMR. Evaluation covers 140 seen and 134 unseen games at each of three starting
+seeds (0, 1000 and 2000).
+
+From the repository root on macOS or Linux, use Python 3.12 and the text-only
+ALFWorld backend:
+
+```bash
+uv venv --python 3.12 .venv
+uv pip install --python .venv/bin/python -r experiments/alfworld/requirements-gemini.txt -e .
+```
+
+Set `ALFWORLD_DATA` to an existing ALFWorld data directory or use
+`.venv/bin/alfworld-download` to populate the default `~/.cache/alfworld`.
+Supply `GEMINI_API_KEY` in the process environment. Set `GEMINI_API_BASE` to
+the Gemini-compatible base URL for a proxy-issued key. The default is Google's
+Gemini API. Chat and embedding default to `gemini-3.1-flash-lite` and
+`gemini-embedding-001`, respectively.
+
+```bash
+.venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py check
+.venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py run
+.venv/bin/python experiments/alfworld/reproduce_gemini_proxy.py status
+```
+
+The default output is `runs/alfworld_gemini_ours/`. Repeat the same run command
+to resume. For a separate Gemini embedding service set
+`EH_GEMINI_EMBED_API_BASE` and `EH_GEMINI_EMBED_API_KEY` together. A local
+OpenAI-compatible embedding service uses `EH_EMBED_MODEL=openai/<served-name>`
+and `EH_LOCAL_EMBED_API_BASE=http://127.0.0.1:<port>/v1`. To collect trajectories
+and induce skills before an embedding service is available, use
+`run --through skills`, then resume with `run`.
+
 ## Environment
 
 ALFWorld pins to Python 3.12 (3.13 hits a latent TextWorld bug).

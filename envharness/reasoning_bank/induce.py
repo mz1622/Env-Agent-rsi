@@ -205,6 +205,7 @@ def induce_memory_items(
     task_query: str, trajectory_text: str, success: bool,
     llm_model: str = "openai/gpt-4.1-mini",
     max_items: int = 3, retries: int = 4,
+    *, raise_on_exhaustion: bool = False,
 ) -> list[dict]:
     """Returns at most `max_items` parsed memory items {title, description, content}."""
     system = SUCCESSFUL_SI if success else FAILED_SI
@@ -224,6 +225,8 @@ def induce_memory_items(
             if _is_fatal_llm_error(e):
                 raise    # auth/permission/budget errors fail every call; don't retry
             if attempt == retries - 1:
+                if raise_on_exhaustion:
+                    raise
                 print(f"[induce_memory_items] WARNING: giving up after "
                       f"{retries} attempts ({type(e).__name__}: {e}); "
                       f"returning 0 items", file=sys.stderr, flush=True)
@@ -315,6 +318,7 @@ def induce_paired_diff(
     task_query: str, fail_trajectory_text: str, succ_trajectory_text: str,
     llm_model: str = "openai/gpt-4.1-mini",
     max_items: int = 3, retries: int = 4,
+    *, raise_on_exhaustion: bool = False,
 ) -> list[dict]:
     """Compare a FAIL and SUCCESS trajectory on the same task. Extract skills."""
     user = (
@@ -337,6 +341,8 @@ def induce_paired_diff(
             if _is_fatal_llm_error(e):
                 raise    # auth/permission/budget errors fail every call; don't retry
             if attempt == retries - 1:
+                if raise_on_exhaustion:
+                    raise
                 print(f"[induce_paired_diff] WARNING: giving up after "
                       f"{retries} attempts ({type(e).__name__}: {e}); "
                       f"returning 0 items", file=sys.stderr, flush=True)
